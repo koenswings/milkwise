@@ -208,12 +208,7 @@ export default function AnalyticsScreen() {
 
       {/* Custom bar chart */}
       <View style={styles.chartCard}>
-        <View style={styles.chartHeader}>
-          <Text style={styles.chartTitle}>Daily Totals (ml)</Text>
-          <View style={styles.targetBadge}>
-            <Text style={styles.targetBadgeText}>― target {derived.dailyTargetMl.toFixed(0)} ml</Text>
-          </View>
-        </View>
+        <Text style={styles.chartTitle}>Daily Totals (ml)</Text>
 
         {(() => {
           const CHART_H = 160;
