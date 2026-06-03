@@ -216,7 +216,6 @@ export default function AnalyticsScreen() {
           const n = totals.length;
           const BAR_W = Math.floor((CHART_W - (n - 1) * 2) / n);
           const maxVal = Math.max(derived.dailyTargetMl * 1.2, ...totals.map(t => t.totalMl), 1);
-          const targetLineBottom = (derived.dailyTargetMl / maxVal) * CHART_H;
 
           function barColor(t: typeof totals[0]): string {
             if (t.date === todayStr) return '#64748b';
@@ -261,19 +260,7 @@ export default function AnalyticsScreen() {
                     );
                   })}
                 </View>
-                {/* Target line */}
-                <View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    height: 1.5,
-                    backgroundColor: COLORS.green,
-                    bottom: targetLineBottom,
-                    opacity: 0.8,
-                  }}
-                />
+
               </View>
               {/* X labels */}
               <View style={{ width: CHART_W, flexDirection: 'row', marginTop: 4 }}>
