@@ -178,6 +178,7 @@ export default function AnalyticsScreen() {
   });
 
   const chartData = totals.map(t => t.totalMl);
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const avgInterval = avgIntervalHours(feeds);
   const consistency = consistencyScore(feeds);
@@ -222,14 +223,16 @@ export default function AnalyticsScreen() {
               datasets: [
                 {
                   data: chartData.length > 0 ? chartData : [0],
-                  // Color each bar based on day-specific target
+                  // Color each bar based on day-specific target.
+                  // Today is always grey — the day is not finished yet.
                   colors: totals.map((t, i) => (opacity: number) => {
-                    if (t.totalMl === 0) return `rgba(51, 65, 85, ${opacity})`; // grey - empty
-                    const pct = (chartData[i] / t.targetMl) * 100;
+                    if (t.date === todayStr) return `rgba(100, 116, 139, ${opacity})`; // grey - in progress
+                    if (t.totalMl === 0) return `rgba(51, 65, 85, ${opacity})`;        // dark grey - empty
+                    const pct = (t.totalMl / t.targetMl) * 100;
                     if (pct > 110) return `rgba(248, 113, 113, ${opacity})`; // red - overfed
                     if (pct >= 80) return `rgba(74, 222, 128, ${opacity})`;  // green - on track
-                    if (pct >= 70) return `rgba(250, 204, 21, ${opacity})`;  // yellow - behind
-                    return `rgba(248, 113, 113, ${opacity})`;                // red - very behind
+                    if (pct >= 70) return `rgba(250, 204, 21, ${opacity})`;  // yellow - slightly behind
+                    return `rgba(248, 113, 113, ${opacity})`;                // red - significantly behind
                   }),
                 },
               ],
@@ -239,7 +242,6 @@ export default function AnalyticsScreen() {
             yAxisLabel=""
             yAxisSuffix=""
             withCustomBarColorFromData
-            flatColor
             chartConfig={{
               backgroundGradientFrom: COLORS.card,
               backgroundGradientTo: COLORS.card,
@@ -257,9 +259,9 @@ export default function AnalyticsScreen() {
             <Text style={styles.noDataText}>No feed data for this period</Text>
           </View>
         )}
-        <Text style={styles.chartLegend}>
-          🟢 on track  🟡 slightly behind  🔴 overfed or significantly behind
-        </Text>
+        <View style={styles.legendRow}>
+          <Text style={styles.chartLegend}>■ <Text style={{color: COLORS.green}}>on track</Text>  ■ <Text style={{color: COLORS.yellow}}>slightly off</Text>  ■ <Text style={{color: COLORS.red}}>overfed / behind</Text>  ■ <Text style={{color: '#64748b'}}>today / no data</Text></Text>
+        </View>
       </View>
 
       {/* Stats grid */}
@@ -366,11 +368,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(74, 222, 128, 0.4)',
   },
   targetBadgeText: { color: COLORS.green, fontSize: 11, fontWeight: '600' },
+  legendRow: {
+    alignSelf: 'stretch',
+    marginTop: 8,
+  },
   chartLegend: {
     color: COLORS.textMuted,
     fontSize: 10,
-    marginTop: 8,
-    alignSelf: 'flex-start',
+    lineHeight: 16,
   },
   noData: { height: 200, alignItems: 'center', justifyContent: 'center' },
   noDataText: { color: COLORS.textSecondary },
