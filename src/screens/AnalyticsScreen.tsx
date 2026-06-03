@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { BarChart } from 'react-native-chart-kit';
-import { getFeeds, getSettings } from '../lib/store';
+import { getFeeds, getSettings, migrateAsyncStorageFeeds } from '../lib/store';
 import {
   deriveSettings,
   dailyTotals,
@@ -153,6 +153,11 @@ export default function AnalyticsScreen() {
     const [f, s] = await Promise.all([getFeeds(), getSettings()]);
     setFeeds(f);
     setSettings(s);
+    const derivedForMigration = deriveSettings(s);
+    await migrateAsyncStorageFeeds(derivedForMigration.dailyTargetMl);
+    // Re-fetch feeds after migration in case they were updated
+    const migratedFeeds = await getFeeds();
+    setFeeds(migratedFeeds);
   }, []);
 
   useFocusEffect(
@@ -162,7 +167,7 @@ export default function AnalyticsScreen() {
   );
 
   const derived = deriveSettings(settings);
-  const totals = dailyTotals(feeds, period);
+  const totals = dailyTotals(feeds, period, derived.dailyTargetMl);
 
   const chartLabels = totals.map((t, i) => {
     if (period === 7) {
@@ -217,9 +222,10 @@ export default function AnalyticsScreen() {
               datasets: [
                 {
                   data: chartData.length > 0 ? chartData : [0],
-                  // Color each bar: green ≥ target, yellow ≥ 80%, red < 80%
-                  colors: chartData.map(v => (opacity: number) => {
-                    const pct = (v / derived.dailyTargetMl) * 100;
+                  // Color each bar based on day-specific target
+                  colors: totals.map((t, i) => (opacity: number) => {
+                    if (t.totalMl === 0) return `rgba(51, 65, 85, ${opacity})`; // grey - empty
+                    const pct = (chartData[i] / t.targetMl) * 100;
                     if (pct > 110) return `rgba(248, 113, 113, ${opacity})`; // red - overfed
                     if (pct >= 80) return `rgba(74, 222, 128, ${opacity})`;  // green - on track
                     if (pct >= 70) return `rgba(250, 204, 21, ${opacity})`;  // yellow - behind

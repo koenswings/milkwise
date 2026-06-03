@@ -2,6 +2,7 @@ export interface Feed {
   id: string;
   timestamp: number; // Unix ms
   volume: number; // ml
+  targetMlPerDay?: number; // target active at log time
 }
 
 export interface Settings {

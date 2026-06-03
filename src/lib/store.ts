@@ -112,3 +112,16 @@ export async function saveSettings(settings: Settings): Promise<void> {
   }
   await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
+
+// Stamps historical feeds (AsyncStorage only) that are missing targetMlPerDay.
+// Idempotent: only runs on feeds without a stamp, skips entirely in API mode.
+export async function migrateAsyncStorageFeeds(currentTargetMl: number): Promise<void> {
+  if (USE_API) return; // Migration handled server-side
+  const feeds = await getFeeds();
+  const needsMigration = feeds.some((f) => f.targetMlPerDay === undefined);
+  if (!needsMigration) return;
+  const migrated = feeds.map((f) =>
+    f.targetMlPerDay !== undefined ? f : { ...f, targetMlPerDay: currentTargetMl }
+  );
+  await saveFeeds(migrated);
+}

@@ -11,8 +11,9 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getFeeds, addFeed, generateId } from '../lib/store';
-import { Feed } from '../types';
+import { getFeeds, addFeed, generateId, getSettings } from '../lib/store';
+import { Feed, Settings } from '../types';
+import { deriveSettings } from '../lib/calculations';
 
 const COLORS = {
   bg: '#0f172a',
@@ -47,11 +48,13 @@ export default function LogScreen({ navigation }: any) {
   const [date, setDate] = useState(todayStr());
   const [time, setTime] = useState(nowTimeStr());
   const [recentFeeds, setRecentFeeds] = useState<Feed[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
 
   const load = useCallback(async () => {
-    const feeds = await getFeeds();
+    const [feeds, s] = await Promise.all([getFeeds(), getSettings()]);
     const sorted = [...feeds].sort((a, b) => b.timestamp - a.timestamp);
     setRecentFeeds(sorted.slice(0, 3));
+    setSettings(s);
     // Reset time to now
     setDate(todayStr());
     setTime(nowTimeStr());
@@ -78,10 +81,12 @@ export default function LogScreen({ navigation }: any) {
       return;
     }
 
+    const derived = settings ? deriveSettings(settings) : null;
     const feed: Feed = {
       id: generateId(),
       timestamp: ts,
       volume: vol,
+      ...(derived ? { targetMlPerDay: Math.round(derived.dailyTargetMl) } : {}),
     };
 
     await addFeed(feed);

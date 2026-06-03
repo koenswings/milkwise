@@ -88,10 +88,14 @@ export function consistencyScore(feeds: Feed[]): number | null {
 
 export function dailyTotals(
   feeds: Feed[],
-  days: number
-): Array<{ date: string; totalMl: number; count: number }> {
+  days: number,
+  currentTargetMl: number
+): Array<{ date: string; totalMl: number; count: number; targetMl: number }> {
   const now = new Date();
-  const result: Array<{ date: string; totalMl: number; count: number }> = [];
+  const result: Array<{ date: string; totalMl: number; count: number; targetMl: number }> = [];
+
+  // Sort all feeds by timestamp ascending for efficient target lookup
+  const sortedFeeds = [...feeds].sort((a, b) => a.timestamp - b.timestamp);
 
   for (let d = days - 1; d >= 0; d--) {
     const day = new Date(now);
@@ -101,10 +105,19 @@ export function dailyTotals(
     const end = start + 24 * 60 * 60 * 1000;
 
     const dayFeeds = feeds.filter((f) => f.timestamp >= start && f.timestamp < end);
+
+    // Find the most recent feed on or before end of this day that has a stamped target
+    const feedsUpToEndOfDay = sortedFeeds.filter(
+      (f) => f.timestamp < end && f.targetMlPerDay !== undefined
+    );
+    const lastStampedFeed = feedsUpToEndOfDay[feedsUpToEndOfDay.length - 1];
+    const targetMl = lastStampedFeed ? lastStampedFeed.targetMlPerDay! : currentTargetMl;
+
     result.push({
       date: dateStr,
       totalMl: dayFeeds.reduce((sum, f) => sum + f.volume, 0),
       count: dayFeeds.length,
+      targetMl,
     });
   }
   return result;
