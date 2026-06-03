@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   Alert,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { getFeeds, deleteFeed, updateFeed, getSettings } from '../lib/store';
@@ -19,6 +21,7 @@ const COLORS = {
   textPrimary: '#e2e8f0',
   textSecondary: '#94a3b8',
   blue: '#3b82f6',
+  green: '#4ade80',
   red: '#f87171',
   border: '#334155',
   inputBg: '#0f172a',
@@ -30,6 +33,15 @@ function formatDateTime(ts: number): string {
     ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
+function toDateStr(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+
+function toTimeStr(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export default function HistoryScreen() {
   const [feeds, setFeeds] = useState<FeedWithCredit[]>([]);
   const [settings, setSettings] = useState<Settings>({
@@ -39,6 +51,8 @@ export default function HistoryScreen() {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editVolume, setEditVolume] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
 
   const load = useCallback(async () => {
     const [rawFeeds, s] = await Promise.all([getFeeds(), getSettings()]);
@@ -71,19 +85,27 @@ export default function HistoryScreen() {
     );
   };
 
-  const handleEditStart = (id: string, currentVolume: number) => {
-    setEditingId(id);
-    setEditVolume(String(currentVolume));
+  const handleEditStart = (item: FeedWithCredit) => {
+    setEditingId(item.id);
+    setEditVolume(String(item.volume));
+    setEditDate(toDateStr(item.timestamp));
+    setEditTime(toTimeStr(item.timestamp));
   };
 
   const handleEditSave = async (id: string) => {
     const vol = parseInt(editVolume, 10);
-    if (!isNaN(vol) && vol > 0) {
-      await updateFeed(id, { volume: vol });
-      await load();
+    if (isNaN(vol) || vol <= 0) {
+      Alert.alert('Invalid volume', 'Please enter a valid volume.');
+      return;
     }
+    const ts = new Date(`${editDate}T${editTime}:00`).getTime();
+    if (isNaN(ts)) {
+      Alert.alert('Invalid date/time', 'Use YYYY-MM-DD and HH:MM format.');
+      return;
+    }
+    await updateFeed(id, { volume: vol, timestamp: ts });
+    await load();
     setEditingId(null);
-    setEditVolume('');
   };
 
   const renderItem = ({ item }: { item: FeedWithCredit }) => {
@@ -91,46 +113,77 @@ export default function HistoryScreen() {
 
     return (
       <View style={styles.feedCard}>
-        <View style={styles.feedMain}>
-          <View style={styles.feedInfo}>
-            <Text style={styles.feedTime}>{formatDateTime(item.timestamp)}</Text>
-            <Text style={styles.feedMeta}>
-              {item.ageHours.toFixed(1)}h old · {item.creditMl.toFixed(0)} ml credit
-            </Text>
-          </View>
-          {isEditing ? (
-            <View style={styles.editRow}>
-              <TextInput
-                style={styles.editInput}
-                value={editVolume}
-                onChangeText={setEditVolume}
-                keyboardType="numeric"
-                autoFocus
-              />
-              <TouchableOpacity style={styles.saveEditBtn} onPress={() => handleEditSave(item.id)}>
-                <Text style={styles.saveEditText}>✓</Text>
+        {isEditing ? (
+          <View>
+            <Text style={styles.editLabel}>Volume (ml)</Text>
+            <TextInput
+              style={styles.editInput}
+              value={editVolume}
+              onChangeText={setEditVolume}
+              keyboardType="numeric"
+              autoFocus
+            />
+            <Text style={styles.editLabel}>Date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.editInput}
+              value={editDate}
+              onChangeText={setEditDate}
+              placeholder="2024-01-15"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <Text style={styles.editLabel}>Time (HH:MM)</Text>
+            <TextInput
+              style={styles.editInput}
+              value={editTime}
+              onChangeText={setEditTime}
+              placeholder="14:30"
+              placeholderTextColor={COLORS.textSecondary}
+            />
+            <View style={styles.editActions}>
+              <TouchableOpacity style={styles.saveBtn} onPress={() => handleEditSave(item.id)}>
+                <Text style={styles.saveBtnText}>✓ Save</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.cancelBtn} onPress={() => setEditingId(null)}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            <TouchableOpacity onPress={() => handleEditStart(item.id, item.volume)}>
+          </View>
+        ) : (
+          <View style={styles.feedMain}>
+            <View style={styles.feedInfo}>
+              <Text style={styles.feedTime}>{formatDateTime(item.timestamp)}</Text>
+              <Text style={styles.feedMeta}>
+                {item.ageHours.toFixed(1)}h old · {item.creditMl.toFixed(0)} ml credit
+              </Text>
+            </View>
+            <View style={styles.feedRight}>
               <Text style={styles.feedVolume}>{item.volume} ml</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <View style={styles.feedActions}>
-          <TouchableOpacity
-            style={styles.deleteBtn}
-            onPress={() => handleDelete(item.id)}
-          >
-            <Text style={styles.deleteBtnText}>🗑 Delete</Text>
-          </TouchableOpacity>
-        </View>
+              <View style={styles.feedActions}>
+                <TouchableOpacity
+                  style={styles.editBtn}
+                  onPress={() => handleEditStart(item)}
+                >
+                  <Text style={styles.editBtnText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.deleteBtn}
+                  onPress={() => handleDelete(item.id)}
+                >
+                  <Text style={styles.deleteBtnText}>🗑</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
     );
   };
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       {feeds.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>No feeds yet. Log your first feed!</Text>
@@ -142,9 +195,10 @@ export default function HistoryScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+          keyboardShouldPersistTaps="handled"
         />
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -162,37 +216,65 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
   },
   feedInfo: { flex: 1 },
   feedTime: { color: COLORS.textPrimary, fontSize: 15, fontWeight: '500' },
   feedMeta: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
+  feedRight: { alignItems: 'flex-end', gap: 6 },
   feedVolume: { color: COLORS.blue, fontSize: 18, fontWeight: '700' },
-  feedActions: { flexDirection: 'row', justifyContent: 'flex-end' },
+  feedActions: { flexDirection: 'row', gap: 8 },
+  editBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  editBtnText: { color: COLORS.textSecondary, fontSize: 12 },
   deleteBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: COLORS.red,
   },
-  deleteBtnText: { color: COLORS.red, fontSize: 13 },
-  editRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  deleteBtnText: { color: COLORS.red, fontSize: 12 },
+  // Edit form
+  editLabel: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 10,
+    marginBottom: 4,
+  },
   editInput: {
     backgroundColor: COLORS.inputBg,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: COLORS.blue,
     color: COLORS.textPrimary,
-    fontSize: 16,
-    padding: 6,
-    width: 70,
-    textAlign: 'center',
+    fontSize: 15,
+    padding: 10,
   },
-  saveEditBtn: {
+  editActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  saveBtn: {
+    flex: 1,
     backgroundColor: COLORS.blue,
     borderRadius: 8,
-    padding: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
-  saveEditText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  cancelBtn: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cancelBtnText: { color: COLORS.textSecondary, fontSize: 14 },
 });
