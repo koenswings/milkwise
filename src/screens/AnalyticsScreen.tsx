@@ -216,13 +216,16 @@ export default function AnalyticsScreen() {
         </View>
 
         {(() => {
-          const CHART_H = 180;
+          const CHART_H = 160;
+          const CHART_W = screenWidth - 64; // card padding 16*2 = 32, content padding 16*2 = 32
+          const n = totals.length;
+          const BAR_W = Math.floor((CHART_W - (n - 1) * 2) / n);
           const maxVal = Math.max(derived.dailyTargetMl * 1.2, ...totals.map(t => t.totalMl), 1);
-          const targetLineY = CHART_H - (derived.dailyTargetMl / maxVal) * CHART_H;
+          const targetLineBottom = (derived.dailyTargetMl / maxVal) * CHART_H;
 
           function barColor(t: typeof totals[0]): string {
             if (t.date === todayStr) return '#64748b';
-            if (t.totalMl === 0) return '#1e293b';
+            if (t.totalMl === 0) return '#334155';
             const pct = (t.totalMl / t.targetMl) * 100;
             if (pct > 110) return COLORS.red;
             if (pct >= 80) return COLORS.green;
@@ -231,45 +234,65 @@ export default function AnalyticsScreen() {
           }
 
           return (
-            <View style={{ height: CHART_H + 24 }}>
-              {/* Chart area */}
-              <View style={{ height: CHART_H, flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
-                {totals.map((t, i) => {
-                  const barH = t.totalMl > 0 ? Math.max(4, (t.totalMl / maxVal) * CHART_H) : 0;
-                  const label = period === 7
-                    ? ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(t.date).getDay()]
-                    : (i % 5 === 0 ? t.date.slice(5) : '');
-                  return (
-                    <TouchableOpacity
-                      key={t.date}
-                      style={{ flex: 1, height: CHART_H, justifyContent: 'flex-end' }}
-                      onPress={() => setTappedDay(
-                        tappedDay?.date === t.date ? null :
-                        { date: t.date, totalMl: t.totalMl, targetMl: t.targetMl }
-                      )}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[
-                        styles.bar,
-                        { height: barH || 2, backgroundColor: barColor(t) },
-                        tappedDay?.date === t.date && styles.barSelected,
-                      ]} />
-                    </TouchableOpacity>
-                  );
-                })}
-                {/* Target line overlay */}
-                <View pointerEvents="none" style={[styles.targetLine, { bottom: (derived.dailyTargetMl / maxVal) * CHART_H }]} />
+            <View style={{ width: CHART_W, alignSelf: 'center' }}>
+              {/* Chart area with relative positioning for target line */}
+              <View style={{ width: CHART_W, height: CHART_H, position: 'relative' }}>
+                {/* Bars row */}
+                <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: CHART_H, flexDirection: 'row', alignItems: 'flex-end' }}>
+                  {totals.map((t, i) => {
+                    const barH = t.totalMl > 0 ? Math.max(3, (t.totalMl / maxVal) * CHART_H) : 3;
+                    const isSelected = tappedDay?.date === t.date;
+                    return (
+                      <React.Fragment key={t.date}>
+                        {i > 0 && <View style={{ width: 2 }} />}
+                        <TouchableOpacity
+                          style={{ width: BAR_W, height: CHART_H, justifyContent: 'flex-end' }}
+                          onPress={() => setTappedDay(
+                            isSelected ? null : { date: t.date, totalMl: t.totalMl, targetMl: t.targetMl }
+                          )}
+                          activeOpacity={0.75}
+                        >
+                          <View style={{
+                            width: BAR_W,
+                            height: barH,
+                            backgroundColor: barColor(t),
+                            borderRadius: 3,
+                            opacity: isSelected ? 0.7 : 1,
+                            borderWidth: isSelected ? 1 : 0,
+                            borderColor: '#fff',
+                          }} />
+                        </TouchableOpacity>
+                      </React.Fragment>
+                    );
+                  })}
+                </View>
+                {/* Target line */}
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    height: 1.5,
+                    backgroundColor: COLORS.green,
+                    bottom: targetLineBottom,
+                    opacity: 0.8,
+                  }}
+                />
               </View>
               {/* X labels */}
-              <View style={{ flexDirection: 'row', gap: 2, marginTop: 4 }}>
+              <View style={{ width: CHART_W, flexDirection: 'row', marginTop: 4 }}>
                 {totals.map((t, i) => {
                   const label = period === 7
                     ? ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(t.date).getDay()]
                     : (i % 5 === 0 ? t.date.slice(5) : '');
                   return (
-                    <Text key={t.date} style={[styles.barLabel, { flex: 1 }]} numberOfLines={1}>
-                      {label}
-                    </Text>
+                    <React.Fragment key={t.date}>
+                      {i > 0 && <View style={{ width: 2 }} />}
+                      <Text style={{ width: BAR_W, fontSize: 9, color: COLORS.textMuted, textAlign: 'center' }} numberOfLines={1}>
+                        {label}
+                      </Text>
+                    </React.Fragment>
                   );
                 })}
               </View>
@@ -386,7 +409,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
-    alignItems: 'center',
   },
   chartHeader: {
     flexDirection: 'row',
