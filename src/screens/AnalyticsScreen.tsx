@@ -9,7 +9,6 @@ import {
   Dimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { BarChart } from 'react-native-chart-kit';
 import { getFeeds, getSettings, migrateAsyncStorageFeeds } from '../lib/store';
 import {
   deriveSettings,
@@ -207,93 +206,99 @@ export default function AnalyticsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Bar chart */}
+      {/* Custom bar chart */}
       <View style={styles.chartCard}>
         <View style={styles.chartHeader}>
           <Text style={styles.chartTitle}>Daily Totals (ml)</Text>
           <View style={styles.targetBadge}>
-            <Text style={styles.targetBadgeText}>
-              ― target {derived.dailyTargetMl.toFixed(0)} ml
-            </Text>
+            <Text style={styles.targetBadgeText}>― target {derived.dailyTargetMl.toFixed(0)} ml</Text>
           </View>
         </View>
-        {chartData.some(v => v > 0) ? (
-          <BarChart
-            data={{
-              labels: chartLabels,
-              datasets: [
-                {
-                  data: chartData.length > 0 ? chartData : [0],
-                  // Color each bar based on day-specific target.
-                  // Today is always grey — the day is not finished yet.
-                  colors: totals.map((t, i) => (opacity: number) => {
-                    if (t.date === todayStr) return `rgba(100, 116, 139, ${opacity})`; // grey - in progress
-                    if (t.totalMl === 0) return `rgba(51, 65, 85, ${opacity})`;        // dark grey - empty
-                    const pct = (t.totalMl / t.targetMl) * 100;
-                    if (pct > 110) return `rgba(248, 113, 113, ${opacity})`; // red - overfed
-                    if (pct >= 80) return `rgba(74, 222, 128, ${opacity})`;  // green - on track
-                    if (pct >= 70) return `rgba(250, 204, 21, ${opacity})`;  // yellow - slightly behind
-                    return `rgba(248, 113, 113, ${opacity})`;                // red - significantly behind
-                  }),
-                },
-              ],
-            }}
-            width={screenWidth - 64}
-            height={200}
-            yAxisLabel=""
-            yAxisSuffix=""
-            withCustomBarColorFromData
-            chartConfig={{
-              backgroundGradientFrom: COLORS.card,
-              backgroundGradientTo: COLORS.card,
-              decimalPlaces: 0,
-              color: (opacity = 1) => `rgba(74, 222, 128, ${opacity})`,
-              labelColor: () => COLORS.textSecondary,
-              propsForBackgroundLines: { stroke: COLORS.border },
-            }}
-            style={{ borderRadius: 8, marginLeft: -16 }}
-            showValuesOnTopOfBars={false}
-            fromZero
-          />
-        ) : (
-          <View style={styles.noData}>
-            <Text style={styles.noDataText}>No feed data for this period</Text>
-          </View>
-        )}
-        {/* Tappable day labels — tap any to see details */}
-        <View style={styles.dayTapRow}>
-          {totals.map((t, i) => (
-            <TouchableOpacity
-              key={t.date}
-              style={styles.dayTapBtn}
-              onPress={() => setTappedDay(
-                tappedDay?.date === t.date ? null : { date: t.date, totalMl: t.totalMl, targetMl: t.targetMl }
-              )}
-            >
-              <Text style={[
-                styles.dayTapLabel,
-                tappedDay?.date === t.date && styles.dayTapLabelActive,
-              ]}>
-                {period === 7
-                  ? ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(t.date).getDay()]
-                  : (i % 5 === 0 ? t.date.slice(5) : '·')}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+
+        {(() => {
+          const CHART_H = 180;
+          const maxVal = Math.max(derived.dailyTargetMl * 1.2, ...totals.map(t => t.totalMl), 1);
+          const targetLineY = CHART_H - (derived.dailyTargetMl / maxVal) * CHART_H;
+
+          function barColor(t: typeof totals[0]): string {
+            if (t.date === todayStr) return '#64748b';
+            if (t.totalMl === 0) return '#1e293b';
+            const pct = (t.totalMl / t.targetMl) * 100;
+            if (pct > 110) return COLORS.red;
+            if (pct >= 80) return COLORS.green;
+            if (pct >= 70) return COLORS.yellow;
+            return COLORS.red;
+          }
+
+          return (
+            <View style={{ height: CHART_H + 24 }}>
+              {/* Chart area */}
+              <View style={{ height: CHART_H, flexDirection: 'row', alignItems: 'flex-end', gap: 2 }}>
+                {totals.map((t, i) => {
+                  const barH = t.totalMl > 0 ? Math.max(4, (t.totalMl / maxVal) * CHART_H) : 0;
+                  const label = period === 7
+                    ? ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(t.date).getDay()]
+                    : (i % 5 === 0 ? t.date.slice(5) : '');
+                  return (
+                    <TouchableOpacity
+                      key={t.date}
+                      style={{ flex: 1, height: CHART_H, justifyContent: 'flex-end' }}
+                      onPress={() => setTappedDay(
+                        tappedDay?.date === t.date ? null :
+                        { date: t.date, totalMl: t.totalMl, targetMl: t.targetMl }
+                      )}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[
+                        styles.bar,
+                        { height: barH || 2, backgroundColor: barColor(t) },
+                        tappedDay?.date === t.date && styles.barSelected,
+                      ]} />
+                    </TouchableOpacity>
+                  );
+                })}
+                {/* Target line overlay */}
+                <View pointerEvents="none" style={[styles.targetLine, { bottom: (derived.dailyTargetMl / maxVal) * CHART_H }]} />
+              </View>
+              {/* X labels */}
+              <View style={{ flexDirection: 'row', gap: 2, marginTop: 4 }}>
+                {totals.map((t, i) => {
+                  const label = period === 7
+                    ? ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(t.date).getDay()]
+                    : (i % 5 === 0 ? t.date.slice(5) : '');
+                  return (
+                    <Text key={t.date} style={[styles.barLabel, { flex: 1 }]} numberOfLines={1}>
+                      {label}
+                    </Text>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })()}
+
+        {/* Tap detail */}
         {tappedDay && (
           <View style={styles.tapInfo}>
             <Text style={styles.tapInfoDate}>{tappedDay.date}</Text>
             <Text style={styles.tapInfoDetail}>
               {tappedDay.totalMl > 0
                 ? `${tappedDay.totalMl} ml · target ${Math.round(tappedDay.targetMl)} ml · ${Math.round((tappedDay.totalMl / tappedDay.targetMl) * 100)}%`
-                : 'No feeds logged'}
+                : tappedDay.date === todayStr ? 'Day in progress' : 'No feeds logged'}
             </Text>
             <TouchableOpacity onPress={() => setTappedDay(null)} style={styles.tapInfoClose}>
               <Text style={styles.tapInfoCloseText}>×</Text>
             </TouchableOpacity>
           </View>
         )}
+
+        {/* Colour legend */}
+        <View style={styles.legendRow}>
+          <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: COLORS.green}]} /><Text style={styles.legendText}>on track</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: COLORS.yellow}]} /><Text style={styles.legendText}>slightly off</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: COLORS.red}]} /><Text style={styles.legendText}>overfed/behind</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: '#64748b'}]} /><Text style={styles.legendText}>today</Text></View>
+        </View>
       </View>
 
       {/* Stats grid */}
@@ -400,24 +405,47 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(74, 222, 128, 0.4)',
   },
   targetBadgeText: { color: COLORS.green, fontSize: 11, fontWeight: '600' },
-  dayTapRow: {
+  bar: {
+    borderRadius: 3,
+    width: '100%',
+  },
+  barSelected: {
+    opacity: 0.7,
+    borderWidth: 1,
+    borderColor: '#fff',
+  },
+  barLabel: {
+    fontSize: 9,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+  },
+  targetLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1.5,
+    backgroundColor: COLORS.green,
+    opacity: 0.7,
+  },
+  legendRow: {
     flexDirection: 'row',
-    alignSelf: 'stretch',
-    marginTop: 4,
-    marginBottom: 2,
+    gap: 10,
+    marginTop: 10,
+    flexWrap: 'wrap',
   },
-  dayTapBtn: {
-    flex: 1,
+  legendItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    gap: 4,
   },
-  dayTapLabel: {
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendText: {
     fontSize: 10,
     color: COLORS.textMuted,
-  },
-  dayTapLabelActive: {
-    color: COLORS.blue,
-    fontWeight: '700',
   },
   tapInfo: {
     alignSelf: 'stretch',
