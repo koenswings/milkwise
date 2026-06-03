@@ -302,7 +302,7 @@ export default function AnalyticsScreen() {
           <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: COLORS.green}]} /><Text style={styles.legendText}>on track</Text></View>
           <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: COLORS.yellow}]} /><Text style={styles.legendText}>slightly off</Text></View>
           <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: COLORS.red}]} /><Text style={styles.legendText}>overfed/behind</Text></View>
-          <View style={styles.legendItem}><View style={[styles.legendDot, {backgroundColor: '#64748b'}]} /><Text style={styles.legendText}>today</Text></View>
+
         </View>
       </View>
 
