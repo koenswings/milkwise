@@ -32,10 +32,22 @@ const COLORS = {
   border: '#334155',
 };
 
+// Mirrors web statusColor: warns on overfeeding (>105% yellow, >110% red)
+// and underfeeding (<80% yellow, <70% red).
 function statusHexColor(pct: number): string {
-  if (pct >= 100) return COLORS.green;
-  if (pct >= 90) return COLORS.yellow;
-  return COLORS.red;
+  if (pct > 110) return COLORS.red;    // significantly overfed
+  if (pct > 105) return COLORS.yellow; // slightly overfed
+  if (pct >= 80) return COLORS.green;  // good zone
+  if (pct >= 70) return COLORS.yellow; // slightly underfed
+  return COLORS.red;                   // significantly underfed
+}
+
+function statusLabel(pct: number): string {
+  if (pct > 110) return '⚠️ overfed';
+  if (pct > 105) return 'slightly overfed';
+  if (pct >= 80) return 'on track';
+  if (pct >= 70) return 'slightly behind';
+  return '⚠️ behind';
 }
 
 function isToday(ts: number): boolean {
@@ -158,9 +170,27 @@ function SmoothedExplainerModal({ visible, onClose, hourlyRate, standardBottleVo
 
             <View style={styles.explainerSection}>
               <Text style={styles.explainerHeading}>What the % means</Text>
-              <Text style={[styles.explainerText, { color: COLORS.green }]}>🟢 100%+ — well fed for the current pace</Text>
-              <Text style={[styles.explainerText, { color: COLORS.yellow }]}>🟡 90–99% — slightly behind, keep an eye on it</Text>
-              <Text style={[styles.explainerText, { color: COLORS.red }]}>🔴 Below 90% — noticeably behind target</Text>
+              <Text style={styles.explainerText}>The goal is to stay close to 100% — not just above it. Both underfeeding and overfeeding carry risks:</Text>
+              <View style={{ marginTop: 8 }}>
+                <Text style={[styles.explainerText, { color: COLORS.red }]}>⚠️ {'>'} 110% — significantly overfed 🔴</Text>
+                <Text style={[styles.explainerText, { color: COLORS.yellow }]}>🟡 {'>'} 105% — slightly overfed, just watch</Text>
+                <Text style={[styles.explainerText, { color: COLORS.green }]}>🟢 80–105% — good zone, on track</Text>
+                <Text style={[styles.explainerText, { color: COLORS.yellow }]}>🟡 70–79% — slightly behind, offer a feed soon</Text>
+                <Text style={[styles.explainerText, { color: COLORS.red }]}>⚠️ {'<'} 70% — significantly behind, feed now 🔴</Text>
+              </View>
+            </View>
+
+            <View style={styles.explainerSection}>
+              <Text style={styles.explainerHeading}>Why does credit decay after 24 hours?</Text>
+              <Text style={styles.explainerText}>
+                The decay is based on <Text style={styles.bold}>energy balance</Text>. Your baby burns through energy
+                continuously at roughly <Text style={styles.bold}>{hourlyRate.toFixed(1)} ml-equivalent per hour</Text> —
+                your daily target spread evenly across 24 hours. A bottle given 30 hours ago contributed its energy then, but in the 6 hours
+                beyond the 24h window your baby burned through {(hourlyRate * 6).toFixed(0)} ml-worth of energy.
+                Subtracting that gives a better model of how much of that bottle’s energy is still
+                “in effect” — sustaining the baby right now. This is why the Smoothed number tracks the
+                running energy balance, not just a fixed window.
+              </Text>
             </View>
 
             {feeds.length > 0 && (
@@ -299,7 +329,7 @@ export default function DashboardScreen({ navigation }: any) {
           <Text style={[styles.cardPct, { color: statusHexColor(strictPct) }]}>
             {strictPct.toFixed(0)}%
           </Text>
-          <Text style={styles.cardSub}>of {derived.dailyTargetMl.toFixed(0)} ml</Text>
+          <Text style={[styles.cardMuted, { color: statusHexColor(strictPct) }]}>{statusLabel(strictPct)}</Text>
         </View>
 
         {/* Smoothed */}
@@ -316,7 +346,7 @@ export default function DashboardScreen({ navigation }: any) {
           <Text style={[styles.cardPct, { color: statusHexColor(smoothedPct) }]}>
             {smoothedPct.toFixed(0)}%
           </Text>
-          <Text style={styles.cardSub}>{smoothed.totalMl.toFixed(0)} ml</Text>
+          <Text style={[styles.cardMuted, { color: statusHexColor(smoothedPct) }]}>{statusLabel(smoothedPct)}</Text>
         </View>
       </View>
 
