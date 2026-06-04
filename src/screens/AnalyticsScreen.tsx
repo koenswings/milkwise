@@ -181,7 +181,7 @@ export default function AnalyticsScreen() {
   });
 
   const chartData = totals.map(t => t.totalMl);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const _td = new Date(); const todayStr = `${_td.getFullYear()}-${String(_td.getMonth()+1).padStart(2,'0')}-${String(_td.getDate()).padStart(2,'0')}`;
 
   const avgInterval = avgIntervalHours(feeds);
   const consistency = consistencyScore(feeds);
