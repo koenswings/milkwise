@@ -268,8 +268,6 @@ export default function DashboardScreen({ navigation }: any) {
 
   const derived = deriveSettings(settings);
 
-  const strict24 = strict24hTotal(feeds, now);
-  const strictPct = (strict24 / derived.dailyTargetMl) * 100;
 
   const lastFeed = feeds.length > 0
     ? feeds.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
@@ -277,6 +275,8 @@ export default function DashboardScreen({ navigation }: any) {
 
   // Smoothed frozen at last-feed time — only changes when a new feed is logged
   const smoothedAt = lastFeed ? lastFeed.timestamp : now;
+  const strict24 = strict24hTotal(feeds, smoothedAt);
+  const strictPct = (strict24 / derived.dailyTargetMl) * 100;
   const smoothed = smoothedEffective(feeds, derived.hourlyRate, settings.standardBottleVolume, smoothedAt);
   const smoothedPct = (smoothed.totalMl / derived.dailyTargetMl) * 100;
 
