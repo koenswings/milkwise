@@ -362,6 +362,17 @@ export default function DashboardScreen({ navigation }: any) {
         </View>
       </View>
 
+      {/* Daily target */}
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.cardLabel}>🎯 Daily Target</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+          <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
+          <Text style={styles.cardMuted}>·</Text>
+          <Text style={[styles.cardValue, { fontSize: 16 }]}>{(derived.dailyTargetMl / settings.standardBottleVolume).toFixed(1)} × {settings.standardBottleVolume} ml bottles</Text>
+        </View>
+        <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
+      </View>
+
       {/* Summary row */}
       <View style={styles.card}>
         <View style={styles.summaryRow}>
