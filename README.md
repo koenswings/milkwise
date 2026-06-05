@@ -2,6 +2,16 @@
 
 A precision bottle-feeding tracker built with Expo + React Native. Runs on iOS and Android via Expo Go, buildable for App Store / Google Play via EAS.
 
+## Dev Environment
+
+Create `.env.local` with the API URL for the running IDEA App instance:
+
+```
+EXPO_PUBLIC_API_URL=http://100.85.108.118:3333
+```
+
+(idea02 Tailscale IP — `idea02.tail2d60.ts.net`. In `__DEV__` mode the app fetches feeds from this address.)
+
 ## Development
 
 ```bash
