@@ -284,7 +284,7 @@ export default function DashboardScreen({ navigation }: any) {
   const smoothed = smoothedEffective(feeds, derived.hourlyRate, settings.standardBottleVolume, smoothedAt);
   const smoothedPct = (smoothed.totalMl / derived.dailyTargetMl) * 100;
 
-  const nextTs = nextFeedTime(feeds, derived.idealIntervalHours);
+  const nextTs = nextFeedTime(feeds, derived.hourlyRate);
 
   const feeds24h = feeds.filter(f => f.timestamp >= now - 86400000);
   const mlPerHour = (derived.hourlyRate).toFixed(1);
@@ -350,7 +350,7 @@ export default function DashboardScreen({ navigation }: any) {
             <>
               <Text style={styles.cardValue}>{formatDateTime(nextTs, settings.timeFormat)}</Text>
               <Text style={styles.cardSub}>{formatRelative(nextTs, now)}</Text>
-              <Text style={styles.cardMuted}>ideal: {derived.idealIntervalHours.toFixed(1)}h</Text>
+              <Text style={styles.cardMuted}>{lastFeed ? `based on ${lastFeed.volume} ml bottle` : `ideal: ${derived.idealIntervalHours.toFixed(1)}h`}</Text>
             </>
           ) : (
             <Text style={styles.cardSub}>No feeds yet</Text>
