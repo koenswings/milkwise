@@ -374,10 +374,12 @@ export default function DashboardScreen({ navigation }: any) {
       {/* Daily target */}
       <View style={[styles.card, { marginBottom: 12 }]}>
         <Text style={styles.cardLabel}>🎯 Daily Target</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
           <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
           <Text style={styles.cardMuted}>·</Text>
           <Text style={[styles.cardValue, { fontSize: 16 }]}>{(derived.dailyTargetMl / derived.milkPerBottle).toFixed(1)} × {settings.standardBottleVolume} ml bottles</Text>
+          <Text style={styles.cardMuted}>·</Text>
+          <Text style={[styles.cardValue, { fontSize: 16 }]}>{(() => { const h = Math.floor(derived.idealIntervalHours); const m = Math.round((derived.idealIntervalHours - h) * 60); return h > 0 ? `every ${h}h ${m}m` : `every ${m}m`; })()}</Text>
         </View>
         <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
       </View>
