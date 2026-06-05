@@ -410,6 +410,9 @@ export default function DashboardScreen({ navigation }: any) {
               <TouchableOpacity onPress={() => setShowStrictExplainer(false)}><Text style={styles.closeBtn}>×</Text></TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 460 }}>
+              <Text style={styles.explainerHeading}>Water ml vs. prepared formula ml</Text>
+              <Text style={styles.explainerText}>You log bottles in <Text style={styles.bold}>water ml</Text>. But the 150 ml/kg/day target is in <Text style={styles.bold}>prepared formula ml</Text> (after mixing powder + water). The conversion ratio varies by bottle size (e.g. 90 ml water → {waterToMilk(90).toFixed(0)} ml formula). The app interpolates from a manufacturer table and converts all logged volumes automatically.</Text>
+
               <Text style={styles.explainerHeading}>What is this?</Text>
               <Text style={styles.explainerText}>The Strict 24h value is the sum of all milk your baby actually drank in the last 24 hours, counted from the most recent feed.</Text>
               <Text style={styles.explainerText}>This is the method paediatricians and health visitors commonly use to check whether a baby is getting enough nutrition over a day.</Text>
