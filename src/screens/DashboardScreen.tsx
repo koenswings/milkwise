@@ -360,7 +360,7 @@ export default function DashboardScreen({ navigation }: any) {
                     : `⬇ earlier ${Math.abs(nextFeedResult.correctionMinutes)}m · recovery`}
                 </Text>
               )}
-              <Text style={styles.cardMuted}>{lastFeed ? `based on ${lastFeed.volume} ml bottle` : `ideal: ${derived.idealIntervalHours.toFixed(1)}h`}</Text>
+
             </>
           ) : (
             <Text style={styles.cardSub}>No feeds yet</Text>
@@ -387,9 +387,7 @@ export default function DashboardScreen({ navigation }: any) {
         <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
           <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
           <Text style={styles.cardMuted}>·</Text>
-          <Text style={[styles.cardValue, { fontSize: 16 }]}>{(derived.dailyTargetMl / derived.milkPerBottle).toFixed(1)} × {settings.standardBottleVolume} ml bottles</Text>
-          <Text style={styles.cardMuted}>·</Text>
-          <Text style={[styles.cardValue, { fontSize: 16 }]}>{(() => { const h = Math.floor(derived.idealIntervalHours); const m = Math.round((derived.idealIntervalHours - h) * 60); return h > 0 ? `every ${h}h ${m}m` : `every ${m}m`; })()}</Text>
+          <Text style={[styles.cardValue, { fontSize: 16 }]}>{settings.standardBottleVolume} ml bottle {(() => { const h = Math.floor(derived.idealIntervalHours); const m = Math.round((derived.idealIntervalHours - h) * 60); return h > 0 ? `every ${h}h ${m}m` : `every ${m}m`; })()}</Text>
         </View>
         <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
       </View>
