@@ -333,7 +333,7 @@ export default function DashboardScreen({ navigation }: any) {
             </TouchableOpacity>
           </View>
           <Text style={[styles.cardValue, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
-            {smoothed.bottles.toFixed(1)} bottles
+            {Math.round(smoothed.totalMl)} ml
           </Text>
           <Text style={[styles.cardPct, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
             {smoothedPct.toFixed(0)}%
