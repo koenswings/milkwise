@@ -353,9 +353,22 @@ export default function DashboardScreen({ navigation }: any) {
             <>
               <Text style={styles.cardValue}>{formatDateTime(nextTs, settings.timeFormat)}</Text>
               <Text style={styles.cardSub}>{formatRelative(nextTs, now)}</Text>
-              {nextFeedResult?.capped && (
-                <Text style={[styles.cardMuted, { color: COLORS.yellow, fontWeight: '600' }]}>⚠️ max gap cap applied</Text>
-              )}
+              {nextFeedResult && lastFeed && (() => {
+                const idealMs = (derived.milkPerBottle / derived.hourlyRate) * 3_600_000;
+                const idealNext = lastFeed.timestamp + idealMs;
+                const deltaMin = Math.round((nextTs - idealNext) / 60_000);
+                if (nextFeedResult.capped) return (
+                  <Text style={[styles.cardMuted, { color: COLORS.yellow, fontWeight: '600' }]}>⚠️ max gap · +{Math.round((nextTs - idealNext) / 60_000)}m vs standard</Text>
+                );
+                if (deltaMin === 0) return (
+                  <Text style={styles.cardMuted}>on standard interval</Text>
+                );
+                return (
+                  <Text style={[styles.cardMuted, { color: deltaMin > 0 ? COLORS.yellow : COLORS.blue, fontWeight: '600' }]}>
+                    {deltaMin > 0 ? `+${deltaMin}m vs standard · overfed` : `${deltaMin}m vs standard · catch up`}
+                  </Text>
+                );
+              })()}
 
             </>
           ) : (
