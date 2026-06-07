@@ -245,7 +245,7 @@ export default function DashboardScreen({ navigation }: any) {
     yellowThresholdPct: 5,
     redThresholdPct: 10,
     timeFormat: '24h',
-    maxFeedGapPct: 150,
+    maxCorrectionPct: 25,
     
   });
   const [showSmoothedExplainer, setShowSmoothedExplainer] = useState(false);
@@ -286,7 +286,7 @@ export default function DashboardScreen({ navigation }: any) {
   const smoothed = smoothedEffective(feeds, derived.hourlyRate, settings.standardBottleVolume, smoothedAt);
   const smoothedPct = (smoothed.totalMl / derived.dailyTargetMl) * 100;
 
-  const nextFeedResult = nextFeedTime(feeds, derived.hourlyRate, settings);
+  const nextFeedResult = nextFeedTime(feeds, derived.hourlyRate, smoothed.totalMl, derived.dailyTargetMl, settings);
   const nextTs = nextFeedResult?.timestamp ?? null;
 
   const feeds24h = feeds.filter(f => f.timestamp >= now - 86400000);
