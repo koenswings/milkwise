@@ -13,7 +13,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getFeeds, deleteFeed, updateFeed, getSettings } from '../lib/store';
 import { formatDateTime } from '../lib/formatTime';
-import { feedsWithCredit, deriveSettings } from '../lib/calculations';
+import { feedsWithCredit, deriveSettings, waterToMilk, milkToWater } from '../lib/calculations';
 import { FeedWithCredit, Settings } from '../types';
 
 const COLORS = {
@@ -53,6 +53,7 @@ export default function HistoryScreen() {
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editVolume, setEditVolume] = useState('');
+  const [editUnit, setEditUnit] = useState<'water' | 'milk'>('water');
   const [editDate, setEditDate] = useState('');
   const [editTime, setEditTime] = useState('');
 
@@ -89,13 +90,15 @@ export default function HistoryScreen() {
 
   const handleEditStart = (item: FeedWithCredit) => {
     setEditingId(item.id);
-    setEditVolume(String(item.volume));
+    setEditVolume(String(item.volume)); // always start in water ml
+    setEditUnit('water');
     setEditDate(toDateStr(item.timestamp));
     setEditTime(toTimeStr(item.timestamp));
   };
 
   const handleEditSave = async (id: string) => {
-    const vol = parseInt(editVolume, 10);
+    const entered = parseFloat(editVolume);
+    const vol = editUnit === 'milk' ? Math.round(milkToWater(entered)) : Math.round(entered);
     if (isNaN(vol) || vol <= 0) {
       Alert.alert('Invalid volume', 'Please enter a valid volume.');
       return;
@@ -117,7 +120,36 @@ export default function HistoryScreen() {
       <View style={styles.feedCard}>
         {isEditing ? (
           <View>
-            <Text style={styles.editLabel}>Volume (ml)</Text>
+            <Text style={styles.editLabel}>
+              {editUnit === 'water' ? 'Water added (ml)' : 'Prepared milk given (ml)'}
+            </Text>
+            {/* Unit toggle */}
+            <View style={styles.unitToggleRow}>
+              <TouchableOpacity
+                style={[styles.unitBtn, editUnit === 'water' && styles.unitBtnActive]}
+                onPress={() => {
+                  if (editUnit === 'milk') {
+                    const milkVal = parseFloat(editVolume);
+                    if (!isNaN(milkVal)) setEditVolume(String(Math.round(milkToWater(milkVal))));
+                    setEditUnit('water');
+                  }
+                }}
+              >
+                <Text style={[styles.unitBtnText, editUnit === 'water' && styles.unitBtnTextActive]}>water ml</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.unitBtn, editUnit === 'milk' && styles.unitBtnActive]}
+                onPress={() => {
+                  if (editUnit === 'water') {
+                    const waterVal = parseFloat(editVolume);
+                    if (!isNaN(waterVal)) setEditVolume(String(Math.round(waterToMilk(waterVal))));
+                    setEditUnit('milk');
+                  }
+                }}
+              >
+                <Text style={[styles.unitBtnText, editUnit === 'milk' && styles.unitBtnTextActive]}>milk ml</Text>
+              </TouchableOpacity>
+            </View>
             <TextInput
               style={styles.editInput}
               value={editVolume}
@@ -125,6 +157,11 @@ export default function HistoryScreen() {
               keyboardType="numeric"
               autoFocus
             />
+            <Text style={styles.unitHint}>
+              {editUnit === 'water'
+                ? `= ${Math.round(waterToMilk(parseFloat(editVolume) || 0))} ml milk`
+                : `= ${Math.round(milkToWater(parseFloat(editVolume) || 0))} ml water`}
+            </Text>
             <Text style={styles.editLabel}>Date (YYYY-MM-DD)</Text>
             <TextInput
               style={styles.editInput}
@@ -279,4 +316,31 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   cancelBtnText: { color: COLORS.textSecondary, fontSize: 14 },
+  unitToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  unitBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    backgroundColor: COLORS.inputBg,
+  },
+  unitBtnActive: {
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.blue,
+  },
+  unitBtnText: { color: COLORS.textSecondary, fontSize: 13, fontWeight: '600' },
+  unitBtnTextActive: { color: '#fff' },
+  unitHint: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+    marginBottom: 4,
+  },
 });

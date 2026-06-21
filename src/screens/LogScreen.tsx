@@ -14,7 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getFeeds, addFeed, generateId, getSettings } from '../lib/store';
 import { formatDateTime } from '../lib/formatTime';
 import { Feed, Settings } from '../types';
-import { deriveSettings } from '../lib/calculations';
+import { deriveSettings, waterToMilk, milkToWater } from '../lib/calculations';
 
 const COLORS = {
   bg: '#0f172a',
@@ -44,6 +44,7 @@ function nowTimeStr(): string {
 
 export default function LogScreen({ navigation }: any) {
   const [volume, setVolume] = useState('90');
+  const [inputUnit, setInputUnit] = useState<'water' | 'milk'>('water');
   const [date, setDate] = useState(todayStr());
   const [time, setTime] = useState(nowTimeStr());
   const [recentFeeds, setRecentFeeds] = useState<Feed[]>([]);
@@ -66,7 +67,8 @@ export default function LogScreen({ navigation }: any) {
   );
 
   const handleSave = async () => {
-    const vol = parseInt(volume, 10);
+    const entered = parseFloat(volume);
+    const vol = inputUnit === 'milk' ? Math.round(milkToWater(entered)) : Math.round(entered);
     if (isNaN(vol) || vol <= 0) {
       Alert.alert('Invalid volume', 'Please enter a valid volume in ml.');
       return;
@@ -100,29 +102,67 @@ export default function LogScreen({ navigation }: any) {
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <Text style={styles.sectionTitle}>Quick Volume</Text>
         <View style={styles.quickRow}>
-          {QUICK_VOLUMES.map((v) => (
-            <TouchableOpacity
-              key={v}
-              style={[styles.quickBtn, volume === String(v) && styles.quickBtnActive]}
-              onPress={() => setVolume(String(v))}
-            >
-              <Text style={[styles.quickBtnText, volume === String(v) && styles.quickBtnTextActive]}>
-                {v} ml
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {QUICK_VOLUMES.map((v) => {
+            const displayVal = inputUnit === 'milk' ? Math.round(waterToMilk(v)) : v;
+            const isActive = volume === String(displayVal);
+            return (
+              <TouchableOpacity
+                key={v}
+                style={[styles.quickBtn, isActive && styles.quickBtnActive]}
+                onPress={() => setVolume(String(displayVal))}
+              >
+                <Text style={[styles.quickBtnText, isActive && styles.quickBtnTextActive]}>
+                  {displayVal} ml
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.label}>Custom Volume (ml)</Text>
+          <Text style={styles.label}>
+            {inputUnit === 'water' ? 'Water added (ml)' : 'Prepared milk given (ml)'}
+          </Text>
+          {/* Unit toggle */}
+          <View style={styles.unitToggleRow}>
+            <TouchableOpacity
+              style={[styles.unitBtn, inputUnit === 'water' && styles.unitBtnActive]}
+              onPress={() => {
+                if (inputUnit === 'milk') {
+                  const milkVal = parseFloat(volume);
+                  if (!isNaN(milkVal)) setVolume(String(Math.round(milkToWater(milkVal))));
+                  setInputUnit('water');
+                }
+              }}
+            >
+              <Text style={[styles.unitBtnText, inputUnit === 'water' && styles.unitBtnTextActive]}>water ml</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.unitBtn, inputUnit === 'milk' && styles.unitBtnActive]}
+              onPress={() => {
+                if (inputUnit === 'water') {
+                  const waterVal = parseFloat(volume);
+                  if (!isNaN(waterVal)) setVolume(String(Math.round(waterToMilk(waterVal))));
+                  setInputUnit('milk');
+                }
+              }}
+            >
+              <Text style={[styles.unitBtnText, inputUnit === 'milk' && styles.unitBtnTextActive]}>milk ml</Text>
+            </TouchableOpacity>
+          </View>
           <TextInput
             style={styles.input}
             value={volume}
             onChangeText={setVolume}
             keyboardType="numeric"
-            placeholder="e.g. 75"
+            placeholder="e.g. 90"
             placeholderTextColor={COLORS.textSecondary}
           />
+          <Text style={styles.unitHint}>
+            {inputUnit === 'water'
+              ? `= ${Math.round(waterToMilk(parseFloat(volume) || 0))} ml milk prepared`
+              : `= ${Math.round(milkToWater(parseFloat(volume) || 0))} ml water`}
+          </Text>
 
           <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
           <TextInput
@@ -233,4 +273,31 @@ const styles = StyleSheet.create({
   },
   feedTime: { color: COLORS.textPrimary, fontSize: 14 },
   feedVolume: { color: COLORS.blue, fontSize: 14, fontWeight: '600' },
+  unitToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  unitBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    backgroundColor: COLORS.inputBg,
+  },
+  unitBtnActive: {
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.blue,
+  },
+  unitBtnText: { color: COLORS.textSecondary, fontSize: 13, fontWeight: '600' },
+  unitBtnTextActive: { color: '#fff' },
+  unitHint: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 4,
+    marginBottom: 4,
+  },
 });
