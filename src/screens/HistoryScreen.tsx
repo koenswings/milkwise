@@ -46,7 +46,7 @@ export default function HistoryScreen() {
   const [settings, setSettings] = useState<Settings>({
     weightKg: 6.27,
     mlPerKgPerDay: 150,
-    standardBottleVolume: 90,
+    preferredBottleWaterMl: 90,
     yellowThresholdPct: 5,
     redThresholdPct: 10,
     timeFormat: '24h',

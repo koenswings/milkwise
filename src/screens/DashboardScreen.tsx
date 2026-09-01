@@ -13,13 +13,14 @@ import { formatDateTime, formatTime } from '../lib/formatTime';
 import {
   deriveSettings,
   strict24hTotal,
-  smoothedEffective,
+  smoothedAtTime,
   waterToMilk,
   FORMULA_TABLE,
-  nextFeedTime,
+  computePredictors,
   bottleCredit,
   statusHexColor,
 } from '../lib/calculations';
+import { PredictorResult } from '../types';
 import { Feed, Settings } from '../types';
 
 const COLORS = {
@@ -241,13 +242,10 @@ export default function DashboardScreen({ navigation }: any) {
   const [settings, setSettings] = useState<Settings>({
     weightKg: 6.27,
     mlPerKgPerDay: 150,
-    standardBottleVolume: 90,
+    preferredBottleWaterMl: 90,
     yellowThresholdPct: 5,
     redThresholdPct: 10,
     timeFormat: '24h',
-    maxCorrectionPct: 25,
-    useTargetAwarePredictor: true,
-    
   });
   const [showSmoothedExplainer, setShowSmoothedExplainer] = useState(false);
   const [showStrictExplainer, setShowStrictExplainer] = useState(false);
@@ -284,11 +282,16 @@ export default function DashboardScreen({ navigation }: any) {
   const smoothedAt = lastFeed ? lastFeed.timestamp : now;
   const strict24 = strict24hTotal(feeds, smoothedAt);
   const strictPct = (strict24 / derived.dailyTargetMl) * 100;
-  const smoothed = smoothedEffective(feeds, derived.hourlyRate, settings.standardBottleVolume, smoothedAt);
-  const smoothedPct = (smoothed.totalMl / derived.dailyTargetMl) * 100;
+  const smoothedTotalMl = smoothedAtTime(feeds, derived.hourlyRate, smoothedAt);
+  const smoothedPct = (smoothedTotalMl / derived.dailyTargetMl) * 100;
 
-  const nextFeedResult = nextFeedTime(feeds, derived.hourlyRate, smoothed.totalMl, derived.dailyTargetMl, settings);
-  const nextTs = nextFeedResult?.timestamp ?? null;
+  const predictors: PredictorResult | null = computePredictors(
+    feeds,
+    derived.hourlyRate,
+    derived.dailyTargetMl,
+    settings.preferredBottleWaterMl
+  );
+  const nextTs = predictors?.predictorBTimestamp ?? null;
 
   const feeds24h = feeds.filter(f => f.timestamp >= now - 86400000);
   const mlPerHour = (derived.hourlyRate).toFixed(1);
@@ -337,7 +340,7 @@ export default function DashboardScreen({ navigation }: any) {
             </TouchableOpacity>
           </View>
           <Text style={[styles.cardValue, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
-            {Math.round(smoothed.totalMl)} ml
+            {Math.round(smoothedTotalMl)} ml
           </Text>
           <Text style={[styles.cardPct, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
             {smoothedPct.toFixed(0)}%
@@ -354,11 +357,11 @@ export default function DashboardScreen({ navigation }: any) {
             <>
               <Text style={styles.cardValue}>{formatDateTime(nextTs, settings.timeFormat)}</Text>
               <Text style={styles.cardSub}>{formatRelative(nextTs, now)}</Text>
-              {nextFeedResult && lastFeed && (() => {
-                const idealMs = (derived.milkPerBottle / derived.hourlyRate) * 3_600_000;
-                const idealNext = lastFeed.timestamp + idealMs;
+              {predictors && lastFeed && (() => {
+                const standardIntervalMs = predictors.standardIntervalMs;
+                const idealNext = lastFeed.timestamp + standardIntervalMs;
                 const deltaMin = Math.round((nextTs - idealNext) / 60_000);
-                if (nextFeedResult.capped) return (
+                if (predictors.predictorBCapped) return (
                   <Text style={[styles.cardMuted, { color: COLORS.yellow, fontWeight: '600' }]}>⚠️ max gap · +{Math.round((nextTs - idealNext) / 60_000)}m vs standard</Text>
                 );
                 if (deltaMin === 0) return (
@@ -397,7 +400,7 @@ export default function DashboardScreen({ navigation }: any) {
         <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
           <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
           <Text style={styles.cardMuted}>·</Text>
-          <Text style={[styles.cardValue, { fontSize: 16 }]}>{settings.standardBottleVolume} ml bottle {(() => { const h = Math.floor(derived.idealIntervalHours); const m = Math.round((derived.idealIntervalHours - h) * 60); return h > 0 ? `every ${h}h ${m}m` : `every ${m}m`; })()}</Text>
+          <Text style={[styles.cardValue, { fontSize: 16 }]}>{settings.preferredBottleWaterMl} ml bottle {(() => { const h = Math.floor(derived.idealIntervalHours); const m = Math.round((derived.idealIntervalHours - h) * 60); return h > 0 ? `every ${h}h ${m}m` : `every ${m}m`; })()}</Text>
         </View>
         <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
       </View>
@@ -456,7 +459,7 @@ export default function DashboardScreen({ navigation }: any) {
         visible={showSmoothedExplainer}
         onClose={() => setShowSmoothedExplainer(false)}
         hourlyRate={derived.hourlyRate}
-        standardBottleVolume={settings.standardBottleVolume}
+        standardBottleVolume={settings.preferredBottleWaterMl}
         dailyTargetMl={derived.dailyTargetMl}
         feeds={feeds}
         now={smoothedAt}

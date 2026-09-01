@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 12.0.0"
+    "version": ">= 12.0.0",
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -8,16 +9,21 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal",
-      "ios": {
-        "simulator": false
-      }
+      "distribution": "store"
     },
     "production": {
+      "distribution": "store",
       "autoIncrement": true
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascApiKeyPath": "./AuthKey_HYRJUKYMTB.p8",
+        "ascApiKeyId": "HYRJUKYMTB",
+        "ascApiKeyIssuerId": "a0b17ef9-b9bc-4c4d-9b27-074fe6587570",
+        "ascAppId": "6796410350"
+      }
+    }
   }
 }

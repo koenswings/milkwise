@@ -9,7 +9,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getFeeds, getSettings, migrateAsyncStorageFeeds } from '../lib/store';
+import { getFeeds, getSettings } from '../lib/store';
 import {
   deriveSettings,
   dailyTotals,
@@ -143,7 +143,7 @@ export default function AnalyticsScreen() {
   const [settings, setSettings] = useState<Settings>({
     weightKg: 6.27,
     mlPerKgPerDay: 150,
-    standardBottleVolume: 90,
+    preferredBottleWaterMl: 90,
     yellowThresholdPct: 5,
     redThresholdPct: 10,
     timeFormat: '24h',
@@ -156,11 +156,7 @@ export default function AnalyticsScreen() {
     const [f, s] = await Promise.all([getFeeds(), getSettings()]);
     setFeeds(f);
     setSettings(s);
-    const derivedForMigration = deriveSettings(s);
-    await migrateAsyncStorageFeeds(derivedForMigration.dailyTargetMl);
-    // Re-fetch feeds after migration in case they were updated
-    const migratedFeeds = await getFeeds();
-    setFeeds(migratedFeeds);
+
   }, []);
 
   useFocusEffect(
@@ -185,7 +181,7 @@ export default function AnalyticsScreen() {
 
   const avgInterval = avgIntervalHours(feeds);
   const consistency = consistencyScore(feeds);
-  const targetBottlesPerDay = derived.dailyTargetMl / settings.standardBottleVolume;
+  const targetBottlesPerDay = derived.dailyTargetMl / settings.preferredBottleWaterMl;
 
   const p3 = periodTotal(feeds, 3);
   const p7 = periodTotal(feeds, 7);
@@ -339,7 +335,7 @@ export default function AnalyticsScreen() {
         <View style={[styles.statCard, styles.halfCard]}>
           <Text style={styles.statLabel}>Target Bottles/day</Text>
           <Text style={styles.statValue}>{targetBottlesPerDay.toFixed(1)}</Text>
-          <Text style={styles.statSub}>{settings.standardBottleVolume} ml each</Text>
+          <Text style={styles.statSub}>{settings.preferredBottleWaterMl} ml each</Text>
         </View>
 
         {/* Total feeds */}

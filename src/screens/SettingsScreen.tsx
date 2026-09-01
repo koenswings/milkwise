@@ -62,7 +62,7 @@ export default function SettingsScreen() {
   const [settings, setSettings] = useState<Settings>({
     weightKg: 6.27,
     mlPerKgPerDay: 150,
-    standardBottleVolume: 90,
+    preferredBottleWaterMl: 90,
     yellowThresholdPct: 5,
     redThresholdPct: 10,
     timeFormat: '24h',
@@ -80,7 +80,7 @@ export default function SettingsScreen() {
     setSettings(s);
     setWeightStr(String(s.weightKg));
     setMlPerKgStr(String(s.mlPerKgPerDay));
-    setBottleVolStr(String(s.standardBottleVolume));
+    setBottleVolStr(String(s.preferredBottleWaterMl));
     setYellowThreshStr(String(s.yellowThresholdPct));
     setRedThreshStr(String(s.redThresholdPct));
     setTimeFormatState(s.timeFormat ?? '24h');
@@ -95,16 +95,16 @@ export default function SettingsScreen() {
   const handleSave = async () => {
     const weightKg = parseFloat(weightStr);
     const mlPerKgPerDay = parseFloat(mlPerKgStr);
-    const standardBottleVolume = parseFloat(bottleVolStr);
+    const preferredBottleWaterMl = parseFloat(bottleVolStr);
     const yellowThresholdPct = parseFloat(yellowThreshStr);
     const redThresholdPct = parseFloat(redThreshStr);
 
-    if (isNaN(weightKg) || isNaN(mlPerKgPerDay) || isNaN(standardBottleVolume) || isNaN(yellowThresholdPct) || isNaN(redThresholdPct)) {
+    if (isNaN(weightKg) || isNaN(mlPerKgPerDay) || isNaN(preferredBottleWaterMl) || isNaN(yellowThresholdPct) || isNaN(redThresholdPct)) {
       Alert.alert('Invalid values', 'Please enter valid numbers for all fields.');
       return;
     }
 
-    const newSettings: Settings = { weightKg, mlPerKgPerDay, standardBottleVolume, yellowThresholdPct, redThresholdPct, timeFormat };
+    const newSettings: Settings = { weightKg, mlPerKgPerDay, preferredBottleWaterMl, yellowThresholdPct, redThresholdPct, timeFormat };
     await saveSettings(newSettings);
     setSettings(newSettings);
     Alert.alert('Saved', 'Settings saved successfully.');

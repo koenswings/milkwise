@@ -24,7 +24,7 @@ const SETTINGS_KEY = 'bmt_settings';
 const DEFAULT_SETTINGS: Settings = {
   weightKg: 6.27,
   mlPerKgPerDay: 150,
-  standardBottleVolume: 90,
+  preferredBottleWaterMl: 90,
   yellowThresholdPct: 5,
   redThresholdPct: 10,
   timeFormat: '24h' as const,
@@ -116,15 +116,8 @@ export async function saveSettings(settings: Settings): Promise<void> {
   await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
-// Stamps historical feeds (AsyncStorage only) that are missing targetMlPerDay.
-// Idempotent: only runs on feeds without a stamp, skips entirely in API mode.
-export async function migrateAsyncStorageFeeds(currentTargetMl: number): Promise<void> {
-  if (USE_API) return; // Migration handled server-side
-  const feeds = await getFeeds();
-  const needsMigration = feeds.some((f) => f.targetMlPerDay === undefined);
-  if (!needsMigration) return;
-  const migrated = feeds.map((f) =>
-    f.targetMlPerDay !== undefined ? f : { ...f, targetMlPerDay: currentTargetMl }
-  );
-  await saveFeeds(migrated);
+// Legacy migration stub — targetMlPerDay has been removed from Feed; this is now a no-op.
+/** @deprecated targetMlPerDay no longer exists on Feed; this function does nothing. */
+export async function migrateAsyncStorageFeeds(_currentTargetMl?: number): Promise<void> {
+  // No-op: migration no longer needed after types/index.ts sync.
 }
