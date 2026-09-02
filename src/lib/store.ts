@@ -11,11 +11,11 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Feed, Settings } from '../types';
+import { Feed, Settings, WeightEntry } from '../types';
 
 // Set in .env for dev; leave unset (or empty) for production builds.
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
-const USE_API = __DEV__ && API_URL.length > 0;
+const USE_API = API_URL.length > 0;
 
 // AsyncStorage keys (production only)
 const FEEDS_KEY = 'bmt_feeds';
@@ -95,13 +95,25 @@ export async function getSettings(): Promise<Settings> {
   if (USE_API) {
     try {
       const res = await fetch(`${API_URL}/api/settings`, { cache: 'no-store' });
-      if (res.ok) return { ...DEFAULT_SETTINGS, ...(await res.json()) };
+      if (res.ok) return { ...DEFAULT_SETTINGS, ...(await res.json() as Partial<Settings>) };
     } catch {}
     return DEFAULT_SETTINGS;
   }
   const raw = await AsyncStorage.getItem(SETTINGS_KEY);
   if (!raw) return DEFAULT_SETTINGS;
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }; } catch { return DEFAULT_SETTINGS; }
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) as Partial<Settings> }; } catch { return DEFAULT_SETTINGS; }
+}
+
+export async function getWeights(): Promise<WeightEntry[]> {
+  if (USE_API) {
+    try {
+      const res = await fetch(`${API_URL}/api/weights`, { cache: 'no-store' });
+      if (res.ok) return res.json() as Promise<WeightEntry[]>;
+    } catch {}
+    return [];
+  }
+  // AsyncStorage fallback — not yet implemented
+  return [];
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

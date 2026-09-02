@@ -1,3 +1,9 @@
+export interface WeightEntry {
+  id: string;
+  timestamp: number;  // ms — when this weight was recorded
+  weightKg: number;
+}
+
 export interface Feed {
   id: string;
   timestamp: number; // Unix ms

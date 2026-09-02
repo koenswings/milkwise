@@ -175,6 +175,53 @@ export function bestBottleSizeNow(
   return { waterMl: closest.water, milkMl: closest.formula, status: "optimal", deficitMl };
 }
 
+/**
+ * smoothedEffective — same as smoothedAtTime but returns { totalMl, bottles }.
+ * Used by StatusCard to display the canonical smoothed intake figure.
+ */
+export function smoothedEffective(
+  feeds: Feed[],
+  hourlyRate: number,
+  standardBottleVolume: number,
+  now: number = Date.now()
+): { totalMl: number; bottles: number } {
+  const milkPerBottle = waterToMilk(standardBottleVolume);
+  const totalMl = feeds.reduce((sum, f) => {
+    const ageHours = (now - f.timestamp) / (1000 * 60 * 60);
+    return sum + bottleCredit(ageHours, waterToMilk(f.volume), hourlyRate);
+  }, 0);
+  const bottles = totalMl / milkPerBottle;
+  return { totalMl, bottles };
+}
+
+/**
+ * Ghost-specific: find earliest T (from refMs) where the smoothed intake
+ * would be at 100% if a bottle of bottleWaterMl were given.
+ * Uses 100.5% boundary so displayed time always shows 100%.
+ */
+export function ghostIntakeReadyAtMs(
+  feeds: Feed[],
+  bottleWaterMl: number,
+  hourlyRate: number,
+  dailyTargetMl: number,
+  refMs: number
+): number {
+  const milkMl = waterToMilk(bottleWaterMl);
+  const target = dailyTargetMl * 1.005 - milkMl - 0.1;
+  const current = smoothedAtTime(feeds, hourlyRate, refMs);
+  if (current <= target) return refMs;
+  const T_max = refMs + 48 * 3_600_000;
+  if (smoothedAtTime(feeds, hourlyRate, T_max) > target) return T_max;
+  let lo = refMs, hi = T_max;
+  for (let i = 0; i < 60; i++) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (smoothedAtTime(feeds, hourlyRate, mid) > target) lo = mid;
+    else hi = mid;
+    if (hi - lo < 60_000) break;
+  }
+  return Math.ceil(hi / 60_000) * 60_000;
+}
+
 export function avgIntervalHours(feeds: Feed[]): number | null {
   const sorted = [...feeds].sort((a, b) => a.timestamp - b.timestamp);
   if (sorted.length < 2) return null;
@@ -414,7 +461,7 @@ export function canTakeProgression(
   now: number,
   hourlyRate: number,
   dailyTargetMl: number
-): Array<{ waterMl: number; milkMl: number; readyAtMs: number; fitsNow: boolean; isPreferred: boolean }> {
+): Array<{ waterMl: number; milkMl: number; readyAtMs: number; fitsNow: boolean; isPreferred: boolean; isAdvised: boolean }> {
   const allSizes = FORMULA_TABLE.map(e => e.water);
   const prefIdx = allSizes.indexOf(preferredBottleWaterMl);
   // Include preferred + one size above (recovery bottle). §7.2 ceiling is preferred+1.
@@ -423,22 +470,20 @@ export function canTakeProgression(
 
   const entries = candidateSizes.map(w => {
     const milkMl = Math.round(waterToMilk(w));
-    // Unified formula — no special-casing. Every size obeys the same rule:
-    //   readyAt(X) = max(stomachReadyAt(X), intakeReadyAt(X))
-    // stomachReadyAt: when has the stomach emptied enough to hold X?
-    // intakeReadyAt:  when has 24h intake decayed enough that giving X lands on target?
-    // Larger bottles have a higher intakeReadyAt threshold (need more intake decay)
-    // AND a later stomachReadyAt (take more room). Both constraints naturally
-    // sequence larger bottles later — no special cases needed.
     const sReady = stomachReadyAtMs(feeds, w, preferredBottleWaterMl, now, hourlyRate);
     const iReady = intakeReadyAtMs(feeds, w, hourlyRate, dailyTargetMl, now);
     const readyAtMs = Math.max(sReady, iReady);
     const fitsNow = readyAtMs <= now + 30_000;
-    return { waterMl: w, milkMl, readyAtMs, fitsNow, isPreferred: w === preferredBottleWaterMl };
+    return { waterMl: w, milkMl, readyAtMs, fitsNow, isPreferred: w === preferredBottleWaterMl, isAdvised: false };
   });
 
-  // Find the largest size available now
+  // isAdvised: largest size with fitsNow === true
   const availableNow = entries.filter(e => e.fitsNow);
+  if (availableNow.length > 0) {
+    const advisedWater = availableNow[availableNow.length - 1].waterMl;
+    entries.forEach(e => { e.isAdvised = e.waterMl === advisedWater; });
+  }
+
   const startWater = availableNow.length > 0
     ? availableNow[availableNow.length - 1].waterMl  // largest available now
     : entries[0].waterMl;                             // nothing available — show all

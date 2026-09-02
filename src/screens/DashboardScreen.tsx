@@ -1,3 +1,15 @@
+/**
+ * DashboardScreen v2 — matches web app design (MilkWise v1.1.0)
+ *
+ * Layout (top→bottom):
+ *   1. Header: MilkWise + version + settings gear
+ *   2. Status card (smoothed intake + stomach vessel)
+ *   3. Feeding Timeline (horizontal scrollable SVG, react-native-svg)
+ *   4. Next Feed card (Predictor A)
+ *   5. Daily Target card
+ *   6. Last 3 feeds list
+ */
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
@@ -5,56 +17,69 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Modal,
+  Dimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getFeeds, getSettings } from '../lib/store';
-import { formatDateTime, formatTime } from '../lib/formatTime';
+import Svg, { Line, Circle, Rect, G, Text as SvgText, Polygon } from 'react-native-svg';
+import { getFeeds, getSettings, getWeights } from '../lib/store';
+import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
   deriveSettings,
   strict24hTotal,
   smoothedAtTime,
+  smoothedEffective,
   waterToMilk,
   FORMULA_TABLE,
   computePredictors,
-  bottleCredit,
+  stomachCapMilk,
+  stomachLoad,
+  canTakeProgression,
+  stomachReadyAtMs,
+  ghostIntakeReadyAtMs,
+  STOMACH_K,
   statusHexColor,
 } from '../lib/calculations';
-import { PredictorResult } from '../types';
-import { Feed, Settings } from '../types';
+import { Feed, Settings, WeightEntry, PredictorResult } from '../types';
 
-const COLORS = {
-  bg: '#0f172a',
-  card: '#1e293b',
-  cardAlt: '#263148',
-  textPrimary: '#e2e8f0',
+const APP_VERSION = '1.1.0';
+
+const C = {
+  bg:            '#0f172a',
+  card:          '#1e293b',
+  cardBorder:    '#334155',
+  textPrimary:   '#e2e8f0',
   textSecondary: '#94a3b8',
-  textMuted: '#64748b',
-  blue: '#3b82f6',
-  green: '#4ade80',
-  yellow: '#facc15',
-  red: '#f87171',
-  border: '#334155',
+  textMuted:     '#64748b',
+  blue:          '#3b82f6',
+  green:         '#4ade80',
+  yellow:        '#facc15',
+  red:           '#f43f5e',
+  teal:          '#2dd4bf',
+  rose:          '#f43f5e',
+  orange:        '#f97316',
 };
 
-function statusLabel(pct: number, y = 5, r = 10): string {
-  const diff = Math.abs(pct - 100);
-  if (diff <= y) return 'on track';
-  if (pct > 100) return diff <= r ? 'slightly overfed' : '⚠️ overfed';
-  return diff <= r ? 'slightly behind' : '⚠️ behind';
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function colorForPct(pct: number, y: number, r: number): string {
+  const d = Math.abs(pct - 100);
+  if (d <= y) return C.green;
+  if (d <= r) return C.yellow;
+  return C.red;
 }
 
-function isToday(ts: number): boolean {
-  const d = new Date(ts);
-  const t = new Date();
-  return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
+function borderColorForPct(pct: number, y: number, r: number): string {
+  const d = Math.abs(pct - 100);
+  if (d <= y) return 'rgba(74,222,128,0.4)';
+  if (d <= r) return 'rgba(250,204,21,0.4)';
+  return 'rgba(244,63,94,0.4)';
 }
 
-function isTomorrow(ts: number): boolean {
-  const d = new Date(ts);
-  const t = new Date();
-  t.setDate(t.getDate() + 1);
-  return d.getDate() === t.getDate() && d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
+function statusText(pct: number, y: number, r: number): string {
+  const d = Math.abs(pct - 100);
+  if (d <= y) return 'on track';
+  if (pct > 100) return d <= r ? 'slightly over' : 'overfed ⚠️';
+  return d <= r ? 'slightly behind' : 'behind ⚠️';
 }
 
 function formatRelative(ts: number, now: number): string {
@@ -67,177 +92,447 @@ function formatRelative(ts: number, now: number): string {
   return diff > 0 ? `in ${timeStr}` : `${timeStr} ago`;
 }
 
-interface SmoothedExplainerProps {
-  visible: boolean;
-  onClose: () => void;
-  hourlyRate: number;
-  standardBottleVolume: number;
-  dailyTargetMl: number;
-  feeds: Feed[];
-  now: number;
-  yellowThresholdPct: number;
-  redThresholdPct: number;
+function fmtTimeStr(ms: number, tf: '24h' | '12h'): string {
+  const d = new Date(ms);
+  let h = d.getHours();
+  const m = d.getMinutes();
+  const ampm = tf === '12h' ? (h >= 12 ? 'PM' : 'AM') : null;
+  if (tf === '12h') h = h % 12 || 12;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${ampm ? ' ' + ampm : ''}`;
 }
 
-function SmoothedExplainerModal({ visible, onClose, hourlyRate, standardBottleVolume, dailyTargetMl, feeds, now, yellowThresholdPct, redThresholdPct }: SmoothedExplainerProps) {
-  const milkPerBottle = waterToMilk(standardBottleVolume);
-  const targetBottles = (dailyTargetMl / milkPerBottle).toFixed(1);
+const SCREEN_W = Dimensions.get('window').width;
+const STANDARD_SIZES = new Set(FORMULA_TABLE.map(e => e.water));
+const NEAR_ZERO_ML = 5;
 
-  const sorted = [...feeds].sort((a, b) => b.timestamp - a.timestamp);
-  const withCredit = sorted.map((f) => {
-    const ageHours = (now - f.timestamp) / (1000 * 60 * 60);
-    const credit = bottleCredit(ageHours, waterToMilk(f.volume), hourlyRate);
-    return { ...f, ageHours, credit };
-  });
+function gastricClearMs(feedTs: number, volumeWaterMl: number): number {
+  const milkMl = waterToMilk(volumeWaterMl);
+  const hours = Math.log(Math.max(milkMl, NEAR_ZERO_ML + 0.1) / NEAR_ZERO_ML) / STOMACH_K;
+  return feedTs + hours * 3_600_000;
+}
 
-  const withSomeCredit = withCredit.filter((f) => f.credit > 0.1);
-  const noCredit = withCredit.filter((f) => f.credit <= 0.1);
-  const totalSmoothedMl = withCredit.reduce((sum, f) => sum + f.credit, 0);
-  const smoothedBottles = totalSmoothedMl / milkPerBottle;
-  const smoothedPct = (totalSmoothedMl / dailyTargetMl) * 100;
+// ── StatusCard ─────────────────────────────────────────────────────────────────
 
-  const pctColor = smoothedPct >= 100 ? COLORS.green : smoothedPct >= 90 ? COLORS.yellow : COLORS.red;
+interface StatusCardProps {
+  smoothedMl: number;
+  smoothedPct: number;
+  loadNow: number;
+  capMilk: number;
+  dailyTargetMl: number;
+  y: number;
+  r: number;
+  onExplain: () => void;
+}
+
+function StatusCard({ smoothedMl, smoothedPct, loadNow, capMilk, dailyTargetMl, y, r, onExplain }: StatusCardProps) {
+  const intakeColor = colorForPct(smoothedPct, y, r);
+  const intakeHex = intakeColor;
+  const intakeFill = Math.min(Math.max((smoothedPct - 60) / 80 * 100, 0), 100);
+  const intakeDiff = smoothedPct - 100;
+  const deltaml = Math.abs(Math.round(smoothedPct / 100 * dailyTargetMl - dailyTargetMl));
+
+  const stomachFillPct = Math.min(100, Math.max(0, (loadNow / capMilk) * 100));
+  const stomachHex = stomachFillPct > 85 ? '#ef4444' : stomachFillPct > 55 ? '#f97316' : '#fbbf24';
+  const roomNow = Math.max(0, capMilk - loadNow);
+  const roomColor = stomachFillPct > 85 ? C.red : stomachFillPct > 55 ? C.orange : C.teal;
+
+  const borderColor = borderColorForPct(smoothedPct, y, r);
+
+  // Gauge bar fill width (max 130% maps to full bar)
+  const gaugeBarFillPct = Math.min(100, (smoothedPct / 130) * 100);
+  const gaugeBarColor = Math.abs(intakeDiff) <= y ? C.green : intakeDiff > 0 ? C.orange : C.blue;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={styles.modalSheet}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>How is Smoothed % calculated?</Text>
-              <TouchableOpacity onPress={onClose}>
-                <Text style={styles.modalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.explainerSection}>
-              <Text style={styles.explainerHeading}>The core idea</Text>
-              <Text style={styles.explainerText}>
-                A bottle your baby drank <Text style={styles.bold}>1 hour ago</Text> fully counts toward today's intake.
-                A bottle from <Text style={styles.bold}>30 hours ago</Text> barely counts — most of that nutrition is already
-                in the past. The Smoothed calculation gives each bottle a <Text style={styles.italic}>credit score</Text> based on
-                how long ago it was given.
-              </Text>
-            </View>
-
-            <View style={styles.explainerSection}>
-              <Text style={styles.explainerHeading}>Step 1 — score each bottle</Text>
-              <Text style={styles.explainerText}>
-                Every bottle starts with full credit equal to its volume (e.g. {standardBottleVolume} ml).
-              </Text>
-              <Text style={[styles.explainerText, { marginTop: 6 }]}>
-                If a bottle was given <Text style={styles.bold}>less than 24 hours ago</Text>, it keeps its full credit.
-              </Text>
-              <Text style={[styles.explainerText, { marginTop: 6 }]}>
-                If a bottle was given <Text style={styles.bold}>more than 24 hours ago</Text>, credit decays at{' '}
-                <Text style={styles.bold}>{hourlyRate.toFixed(1)} ml per hour</Text> until it hits zero.
-              </Text>
-              <View style={styles.exampleBox}>
-                <Text style={styles.exampleText}>
-                  <Text style={styles.bold}>Example:</Text> A {standardBottleVolume} ml bottle given 26 hours ago.{'\n'}
-                  Hours beyond 24: 2h → credit lost: {(2 * hourlyRate).toFixed(0)} ml{'\n'}
-                  Remaining credit: {Math.max(0, standardBottleVolume - 2 * hourlyRate).toFixed(0)} ml
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.explainerSection}>
-              <Text style={styles.explainerHeading}>Step 2 — add it all up</Text>
-              <Text style={styles.explainerText}>
-                We add credits from every bottle ever logged, divide by the bottle size ({standardBottleVolume} ml)
-                to get a bottle count, then divide by your daily target ({dailyTargetMl.toFixed(0)} ml / {targetBottles} bottles) × 100 for the percentage.
-              </Text>
-            </View>
-
-            <View style={styles.explainerSection}>
-              <Text style={styles.explainerHeading}>What the % means</Text>
-              <Text style={styles.explainerText}>The goal is to stay close to 100% — not just above it. Both underfeeding and overfeeding carry risks:</Text>
-              <View style={{ marginTop: 8 }}>
-                <Text style={[styles.explainerText, { color: COLORS.red }]}>⚠️ {'>'} {100 + redThresholdPct}% — significantly overfed 🔴</Text>
-                <Text style={[styles.explainerText, { color: COLORS.yellow }]}>🟡 {'>'} {100 + yellowThresholdPct}% — slightly overfed, just watch</Text>
-                <Text style={[styles.explainerText, { color: COLORS.green }]}>🟢 {100 - yellowThresholdPct}–{100 + yellowThresholdPct}% — good zone, on track</Text>
-                <Text style={[styles.explainerText, { color: COLORS.yellow }]}>🟡 {100 - redThresholdPct}–{100 - yellowThresholdPct - 1}% — slightly behind, offer a feed soon</Text>
-                <Text style={[styles.explainerText, { color: COLORS.red }]}>⚠️ {'<'} {100 - redThresholdPct}% — significantly behind, feed now 🔴</Text>
-              </View>
-            </View>
-
-            <View style={styles.explainerSection}>
-              <Text style={styles.explainerHeading}>Why does credit decay after 24 hours?</Text>
-              <Text style={styles.explainerText}>
-                The decay is based on <Text style={styles.bold}>energy balance</Text>. Your baby burns through energy
-                continuously at roughly <Text style={styles.bold}>{hourlyRate.toFixed(1)} ml-equivalent per hour</Text> —
-                your daily target spread evenly across 24 hours. A bottle given 30 hours ago contributed its energy then, but in the 6 hours
-                beyond the 24h window your baby burned through {(hourlyRate * 6).toFixed(0)} ml-worth of energy.
-                Subtracting that gives a better model of how much of that bottle’s energy is still
-                “in effect” — sustaining the baby right now. This is why the Smoothed number tracks the
-                running energy balance, not just a fixed window.
-              </Text>
-            </View>
-
-            {feeds.length > 0 && (
-              <View style={styles.explainerSection}>
-                <Text style={styles.explainerHeading}>Your actual feeds right now</Text>
-
-                {withSomeCredit.length === 0 ? (
-                  <Text style={styles.explainerText}>No feeds with remaining credit.</Text>
-                ) : (
-                  <View style={styles.feedTable}>
-                    <View style={[styles.feedTableRow, styles.feedTableHeader]}>
-                      <Text style={[styles.feedTableCell, { flex: 2, color: COLORS.textSecondary }]}>Feed time</Text>
-                      <Text style={[styles.feedTableCell, { color: COLORS.textSecondary, textAlign: 'right' }]}>Vol</Text>
-                      <Text style={[styles.feedTableCell, { color: COLORS.textSecondary, textAlign: 'right' }]}>Age</Text>
-                      <Text style={[styles.feedTableCell, { color: COLORS.textSecondary, textAlign: 'right' }]}>Credit</Text>
-                    </View>
-                    {withSomeCredit.map((f) => (
-                      <View key={f.id} style={[styles.feedTableRow, styles.feedTableRowBorder]}>
-                        <Text style={[styles.feedTableCell, { flex: 2, color: COLORS.textSecondary, fontSize: 11 }]}>{formatDateTime(f.timestamp)}</Text>
-                        <Text style={[styles.feedTableCell, { textAlign: 'right' }]}>{f.volume}</Text>
-                        <Text style={[styles.feedTableCell, { textAlign: 'right', color: f.ageHours < 24 ? COLORS.green : COLORS.yellow }]}>
-                          {f.ageHours.toFixed(1)}h
-                        </Text>
-                        <Text style={[styles.feedTableCell, { textAlign: 'right', color: f.credit >= waterToMilk(f.volume) - 0.1 ? COLORS.green : COLORS.yellow }]}>
-                          {f.credit.toFixed(0)} ml
-                        </Text>
-                      </View>
-                    ))}
-                    {noCredit.length > 0 && (
-                      <View style={[styles.feedTableRow, styles.feedTableRowBorder]}>
-                        <Text style={{ color: COLORS.textMuted, fontSize: 11, fontStyle: 'italic', padding: 8 }}>
-                          + {noCredit.length} older feed{noCredit.length > 1 ? 's' : ''} with no remaining credit
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                <View style={styles.totalsBox}>
-                  <View style={styles.totalsRow}>
-                    <Text style={styles.totalsLabel}>Total credit</Text>
-                    <Text style={styles.totalsValue}>{totalSmoothedMl.toFixed(0)} ml</Text>
-                  </View>
-                  <View style={styles.totalsRow}>
-                    <Text style={styles.totalsLabel}>÷ bottle size ({standardBottleVolume} ml)</Text>
-                    <Text style={styles.totalsValue}>= {smoothedBottles.toFixed(2)} bottles</Text>
-                  </View>
-                  <View style={styles.totalsRow}>
-                    <Text style={styles.totalsLabel}>÷ daily target × 100</Text>
-                    <Text style={[styles.totalsValue, { color: pctColor, fontWeight: '700' }]}>= {smoothedPct.toFixed(1)}%</Text>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            <TouchableOpacity style={styles.modalDismissBtn} onPress={onClose}>
-              <Text style={styles.modalDismissBtnText}>Got it</Text>
-            </TouchableOpacity>
-          </ScrollView>
+    <View style={[styles.card, { borderColor, borderWidth: 1, marginBottom: 12 }]}>
+      {/* Header */}
+      <View style={styles.rowSpaced}>
+        <Text style={styles.cardLabel}>STATUS AT LAST FEED</Text>
+        <TouchableOpacity onPress={onExplain} style={styles.questionCircle}>
+          <Text style={styles.questionCircleText}>?</Text>
         </TouchableOpacity>
-      </TouchableOpacity>
-    </Modal>
+      </View>
+
+      {/* Two columns */}
+      <View style={styles.statusCols}>
+        {/* Left: intake */}
+        <View style={styles.statusLeft}>
+          <Text style={styles.statusColLabel}>24h intake · at last feed</Text>
+
+          {/* Vertical gauge */}
+          <View style={styles.gaugeContainer}>
+            <View style={styles.gaugeBar}>
+              <View style={[styles.gaugeFill, { height: `${intakeFill}%` as any, backgroundColor: intakeHex }]} />
+              <View style={styles.gaugeTargetLine} />
+            </View>
+          </View>
+
+          <Text style={[styles.statusBigNum, { color: intakeColor }]}>
+            {Math.round(smoothedMl)}<Text style={styles.statusBigUnit}> ml</Text>
+          </Text>
+          <Text style={[styles.statusSmall, { color: intakeColor }]}>{Math.round(smoothedPct)}%</Text>
+          <Text style={styles.statusDelta}>
+            {Math.abs(intakeDiff) < 1 ? 'on target' : `${intakeDiff > 0 ? '+' : '−'}${deltaml} ml`}
+          </Text>
+        </View>
+
+        {/* Right: stomach */}
+        <View style={styles.statusRight}>
+          <Text style={styles.statusColLabel}>stomach room · now</Text>
+
+          {/* Stomach vessel */}
+          <View style={styles.stomachVessel}>
+            <View style={[styles.stomachEmpty, { bottom: `${stomachFillPct}%` as any }]} />
+            <View style={[styles.stomachFill, { height: `${stomachFillPct}%` as any, backgroundColor: stomachHex }]} />
+          </View>
+
+          <Text style={[styles.statusBigNum, { color: roomColor }]}>
+            {Math.round(roomNow)}<Text style={styles.statusBigUnit}> ml free</Text>
+          </Text>
+          <Text style={[styles.statusSmall, { color: roomColor }]}>{Math.round(loadNow)} ml digesting</Text>
+        </View>
+      </View>
+
+      {/* Bottom twin progress bars */}
+      <View style={styles.twinBars}>
+        <View style={styles.twinBarTrack}>
+          <View style={[styles.twinBarFill, { width: `${gaugeBarFillPct}%` as any, backgroundColor: gaugeBarColor }]} />
+          <View style={styles.twinBarTarget} />
+        </View>
+        <View style={styles.twinBarTrack}>
+          <View style={[styles.twinBarFill, { width: `${stomachFillPct}%` as any, backgroundColor: stomachHex }]} />
+        </View>
+      </View>
+    </View>
   );
 }
 
-export default function DashboardScreen({ navigation }: any) {
+// ── FeedingTimeline ────────────────────────────────────────────────────────────
+
+interface TimelineProps {
+  feeds: Feed[];
+  predictors: PredictorResult;
+  preferredBottleWaterMl: number;
+  now: number;
+  hourlyRate: number;
+  dailyTargetMl: number;
+  timeFormat: '24h' | '12h';
+}
+
+const TIMELINE_PAD = 24;
+const TRACK_Y      = 82;
+const LABEL_BASE_Y = TRACK_Y - 28;
+const LABEL_LIFT_Y = TRACK_Y - 50;
+const TIME_BASE_Y  = TRACK_Y + 18;
+const TIME_DROP_Y  = TRACK_Y + 34;
+const HOUR_TICK_Y  = TRACK_Y + 4;
+const HOUR_LABEL_Y = TRACK_Y + 22;
+const SVG_H        = TRACK_Y + 60;
+const HALF_HOUR_MS = 30 * 60_000;
+const HOUR_MS      = 60 * 60_000;
+
+function fmtHour(ms: number, tf: '24h' | '12h'): string {
+  const d = new Date(ms);
+  let h = d.getHours();
+  if (tf === '12h') {
+    const sfx = h >= 12 ? 'p' : 'a';
+    h = h % 12 || 12;
+    return `${h}${sfx}`;
+  }
+  return `${String(h).padStart(2, '0')}:00`;
+}
+
+function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat }: TimelineProps) {
+  const cardW = SCREEN_W - 32; // account for screen padding
+
+  const progression = canTakeProgression(feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl);
+  const lastFeed = feeds.length > 0 ? feeds.reduce((a, b) => a.timestamp > b.timestamp ? a : b) : null;
+  const lastFeedIsNonStandard = lastFeed ? !STANDARD_SIZES.has(lastFeed.volume) : false;
+
+  // Ghost readyAt: use lastFeed.timestamp as reference (CRITICAL)
+  const ghostReadyAt = new Map<number, number>();
+  if (lastFeed) {
+    const sizes = [...new Set([...progression.map(e => e.waterMl), ...FORMULA_TABLE.map(e => e.water)])];
+    for (const wml of sizes) {
+      const sMs = stomachReadyAtMs(feeds, wml, preferredBottleWaterMl, lastFeed.timestamp, hourlyRate);
+      const iMs = ghostIntakeReadyAtMs(feeds, wml, hourlyRate, dailyTargetMl, lastFeed.timestamp);
+      ghostReadyAt.set(wml, Math.max(sMs, iMs));
+    }
+  } else {
+    progression.forEach(e => ghostReadyAt.set(e.waterMl, e.readyAtMs));
+  }
+
+  const allFuture = progression.length > 0 && !progression.some(e => e.fitsNow);
+
+  // Timeline bounds
+  const LOOKBACK_MS = 12 * 3_600_000;
+  const earliestFeed = feeds.length > 0 ? Math.min(...feeds.map(f => f.timestamp)) : now - LOOKBACK_MS;
+  const T_START = Math.min(earliestFeed, now - LOOKBACK_MS) - 20 * 60_000;
+
+  const latestProg = progression.length > 0 ? Math.max(...progression.map(e => e.readyAtMs)) : now + 60 * 60_000;
+  const lastGastricEnd = lastFeed ? gastricClearMs(lastFeed.timestamp, lastFeed.volume) : now;
+  const T_END = Math.max(latestProg, lastGastricEnd) + 25 * 60_000;
+  const spanMs = T_END - T_START;
+
+  // Scale: at minimum show a 96px gap between 30-min markers
+  const capMilkVal = predictors.stomachCapMilk;
+  const t30DecayMs = capMilkVal > 30 ? (-Math.log(1 - 30 / capMilkVal) / STOMACH_K) * 3_600_000 : 20 * 60_000;
+  const LABEL_MIN_GAP_PX = 96;
+  const minScale = LABEL_MIN_GAP_PX / t30DecayMs;
+  const autoScale = (cardW - TIMELINE_PAD) / spanMs;
+  const scale = Math.max(autoScale, minScale);
+
+  const SCROLL_W = Math.ceil(spanMs * scale) + TIMELINE_PAD;
+
+  function px(ms: number): number {
+    return TIMELINE_PAD / 2 + Math.round((ms - T_START) * scale);
+  }
+
+  // Hour ticks
+  const hourTicks: { ms: number; isHour: boolean }[] = [];
+  const tickStart = Math.ceil(T_START / HALF_HOUR_MS) * HALF_HOUR_MS;
+  for (let t = tickStart; t <= T_END; t += HALF_HOUR_MS) {
+    hourTicks.push({ ms: t, isHour: t % HOUR_MS === 0 });
+  }
+  const showHourLabels = HOUR_MS * scale >= 28;
+  const showHalfTicks  = HALF_HOUR_MS * scale >= 6;
+
+  // Sorted feeds for band computation
+  const sortedFeeds = [...feeds].filter(f => f.timestamp <= now + 60_000).sort((a, b) => a.timestamp - b.timestamp);
+  interface GastricBand { feedMs: number; gastricEndMs: number; epochEndMs: number; index: number; }
+  const gastricBands: GastricBand[] = sortedFeeds.map((f, i) => ({
+    feedMs: f.timestamp,
+    gastricEndMs: gastricClearMs(f.timestamp, f.volume),
+    epochEndMs: sortedFeeds[i + 1] ? sortedFeeds[i + 1].timestamp : T_END,
+    index: i,
+  }));
+
+  const EPOCH_BG   = ['rgba(45,212,191,0.06)', 'rgba(148,163,184,0.05)'];
+  const GASTRIC_BG = ['rgba(45,212,191,0.15)', 'rgba(100,116,139,0.13)'];
+
+  // Build markers
+  interface Marker { ms: number; x: number; numStr: string; showBottle: boolean; header: string; time: string; dotColor: string; labelColor: string; fillDot: boolean; }
+  const allMarkers: Marker[] = [];
+
+  // Past feeds (not lastFeed)
+  [...feeds].filter(f => f !== lastFeed).sort((a, b) => a.timestamp - b.timestamp).forEach(f => {
+    const isNS = !STANDARD_SIZES.has(f.volume);
+    allMarkers.push({
+      ms: f.timestamp, x: px(f.timestamp),
+      numStr: isNS ? `${Math.round(waterToMilk(f.volume))}` : `${f.volume}`,
+      showBottle: !isNS, header: '', time: fmtTimeStr(f.timestamp, timeFormat),
+      dotColor: '#475569', labelColor: '#94a3b8', fillDot: true,
+    });
+  });
+
+  // Last feed
+  if (lastFeed) {
+    const isNS = lastFeedIsNonStandard;
+    allMarkers.push({
+      ms: lastFeed.timestamp, x: px(lastFeed.timestamp),
+      numStr: isNS ? `${Math.round(waterToMilk(lastFeed.volume))}` : `${lastFeed.volume}`,
+      showBottle: !isNS, header: 'Last Feed', time: fmtTimeStr(lastFeed.timestamp, timeFormat),
+      dotColor: '#475569', labelColor: '#94a3b8', fillDot: true,
+    });
+  }
+
+  // Progression markers
+  progression.forEach(e => {
+    if (e.isAdvised) {
+      // Ghost marker (from lastFeed.timestamp reference)
+      const ghostMs = ghostReadyAt.get(e.waterMl) ?? (lastFeed?.timestamp ?? e.readyAtMs);
+      allMarkers.push({
+        ms: ghostMs, x: px(ghostMs),
+        numStr: `${e.waterMl}`, showBottle: true, header: '', time: fmtTimeStr(ghostMs, timeFormat),
+        dotColor: '#475569', labelColor: '#64748b', fillDot: false,
+      });
+      // Advised marker at now (green)
+      allMarkers.push({
+        ms: now, x: px(now),
+        numStr: `${e.waterMl}`, showBottle: true, header: 'Give now', time: 'now',
+        dotColor: C.green, labelColor: C.green, fillDot: true,
+      });
+    } else if (e.fitsNow) {
+      const ghostMs = ghostReadyAt.get(e.waterMl) ?? (lastFeed?.timestamp ?? e.readyAtMs);
+      allMarkers.push({
+        ms: ghostMs, x: px(ghostMs),
+        numStr: `${e.waterMl}`, showBottle: true, header: '', time: fmtTimeStr(ghostMs, timeFormat),
+        dotColor: '#475569', labelColor: '#64748b', fillDot: false,
+      });
+    } else {
+      const isAbove = e.waterMl > preferredBottleWaterMl;
+      allMarkers.push({
+        ms: e.readyAtMs, x: px(e.readyAtMs),
+        numStr: `${e.waterMl}`, showBottle: true, header: '', time: fmtTimeStr(e.readyAtMs, timeFormat),
+        dotColor: isAbove ? C.teal : C.rose, labelColor: isAbove ? C.teal : C.rose, fillDot: false,
+      });
+    }
+  });
+
+  allMarkers.sort((a, b) => a.ms - b.ms);
+
+  // Collision lifting
+  const FS_LABEL  = 15;
+  const FS_TIME   = 12;
+  const FS_HEADER = 11;
+  const FS_HOUR   = 9;
+
+  function approxW(text: string, fs: number): number { return text.length * fs * 0.62; }
+  const halfW = allMarkers.map(m => approxW(m.numStr, FS_LABEL) / 2 + (m.showBottle ? FS_LABEL * 0.7 : 0));
+  const timeHW = allMarkers.map(m => approxW(m.time, FS_TIME) / 2);
+
+  const lifted = allMarkers.map(() => false);
+  for (let i = 1; i < allMarkers.length; i++) {
+    if (allMarkers[i].x - halfW[i] < allMarkers[i-1].x + halfW[i-1] + 6) {
+      lifted[i] = !lifted[i-1];
+      if (lifted[i-1]) lifted[i] = false;
+    }
+  }
+  const timeDrop = allMarkers.map(() => false);
+  for (let i = 1; i < allMarkers.length; i++) {
+    if (allMarkers[i].x - timeHW[i] < allMarkers[i-1].x + timeHW[i-1] + 6) {
+      timeDrop[i] = !timeDrop[i-1];
+    }
+  }
+
+  const nowX = px(now);
+
+  return (
+    <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }]}>
+      {/* Gradient top strip via View */}
+      <View style={styles.timelineStrip} />
+
+      <View style={styles.rowSpaced}>
+        <Text style={styles.cardLabel}>FEEDING TIMELINE</Text>
+        <View style={styles.questionCircle}><Text style={styles.questionCircleText}>?</Text></View>
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+        <Svg width={SCROLL_W} height={SVG_H}>
+          {/* Epoch bands */}
+          {gastricBands.map((b, i) => {
+            const x1 = Math.max(0, px(b.feedMs));
+            const x2 = Math.min(SCROLL_W, px(b.epochEndMs));
+            if (x2 <= x1) return null;
+            return <Rect key={`ep-${i}`} x={x1} y={0} width={x2-x1} height={SVG_H} fill={EPOCH_BG[i%2]} />;
+          })}
+
+          {/* Gastric active zone */}
+          {gastricBands.map((b, i) => {
+            const x1 = Math.max(0, px(b.feedMs));
+            const x2 = Math.min(SCROLL_W, px(Math.min(b.gastricEndMs, b.epochEndMs)));
+            if (x2 <= x1) return null;
+            return <Rect key={`ga-${i}`} x={x1} y={0} width={x2-x1} height={SVG_H} fill={GASTRIC_BG[i%2]} />;
+          })}
+
+          {/* Hour ticks */}
+          {hourTicks.map((tick, i) => {
+            if (!tick.isHour && !showHalfTicks) return null;
+            const x = px(tick.ms);
+            if (x < 0 || x > SCROLL_W) return null;
+            return (
+              <G key={`ht-${i}`}>
+                <Line
+                  x1={x} y1={HOUR_TICK_Y}
+                  x2={x} y2={tick.isHour ? HOUR_TICK_Y + 9 : HOUR_TICK_Y + 5}
+                  stroke={tick.isHour ? '#334155' : '#293548'}
+                  strokeWidth={tick.isHour ? 1.5 : 1}
+                />
+                {tick.isHour && showHourLabels && (
+                  <SvgText x={x} y={HOUR_LABEL_Y}
+                    textAnchor="middle" fontSize={FS_HOUR}
+                    fill="#475569" fontFamily="monospace">
+                    {fmtHour(tick.ms, timeFormat)}
+                  </SvgText>
+                )}
+              </G>
+            );
+          })}
+
+          {/* Main track line */}
+          <Line x1={0} y1={TRACK_Y} x2={SCROLL_W} y2={TRACK_Y} stroke="#334155" strokeWidth={1.5} />
+
+          {/* "Now" dashed reference */}
+          <G>
+            <Line x1={nowX} y1={0} x2={nowX} y2={SVG_H}
+              stroke="#475569" strokeWidth={1} strokeDasharray="3,3" opacity={0.28} />
+            <SvgText x={nowX} y={12}
+              textAnchor="middle" fontSize={9} fill="#475569" fontFamily="monospace">
+              now
+            </SvgText>
+          </G>
+
+          {/* Feed markers */}
+          {allMarkers.map((m, i) => {
+            const isLift = lifted[i];
+            const isDrop = timeDrop[i];
+            const labelY = isLift ? LABEL_LIFT_Y : LABEL_BASE_Y;
+            const headerY = labelY - 16;
+            const timeY = isDrop ? TIME_DROP_Y : TIME_BASE_Y;
+            const nHW = approxW(m.numStr, FS_LABEL) / 2;
+
+            return (
+              <G key={`m-${i}`}>
+                {isLift && (
+                  <Line x1={m.x} y1={labelY+4} x2={m.x} y2={TRACK_Y-10}
+                    stroke={m.dotColor} strokeWidth={1} strokeDasharray="3,2" opacity={0.55} />
+                )}
+                {isDrop && (
+                  <Line x1={m.x} y1={TRACK_Y+8} x2={m.x} y2={timeY-4}
+                    stroke={m.dotColor} strokeWidth={1} strokeDasharray="3,2" opacity={0.45} />
+                )}
+                {!isLift && (
+                  <Line x1={m.x} y1={TRACK_Y-8} x2={m.x} y2={TRACK_Y+8}
+                    stroke={m.dotColor} strokeWidth={1.5} />
+                )}
+                <Circle cx={m.x} cy={TRACK_Y} r={6}
+                  fill={m.fillDot ? m.dotColor : '#1e293b'}
+                  stroke={m.dotColor} strokeWidth={2.5} />
+                {!!m.header && (
+                  <SvgText x={m.x} y={headerY} textAnchor="middle"
+                    fontSize={FS_HEADER} fill="#64748b" fontFamily="system-ui,sans-serif">
+                    {m.header}
+                  </SvgText>
+                )}
+                <SvgText x={m.x} y={labelY} textAnchor="middle"
+                  fontSize={FS_LABEL} fontWeight="bold"
+                  fill={m.labelColor} fontFamily="monospace">
+                  {m.numStr}
+                </SvgText>
+                {m.showBottle && (
+                  <SvgText x={m.x + nHW + 2} y={labelY}
+                    textAnchor="start" fontSize={FS_LABEL} fill={m.labelColor}>
+                    🍼
+                  </SvgText>
+                )}
+                <SvgText x={m.x} y={timeY} textAnchor="middle"
+                  fontSize={FS_TIME} fontWeight="600"
+                  fill={m.labelColor} fontFamily="monospace">
+                  {m.time}
+                </SvgText>
+              </G>
+            );
+          })}
+        </Svg>
+      </ScrollView>
+
+      {allFuture && (() => {
+        const currentSmoothed = smoothedAtTime(feeds, hourlyRate, now);
+        const isStomachLimited = currentSmoothed < dailyTargetMl;
+        return (
+          <Text style={[styles.timelineNote, { color: isStomachLimited ? C.textSecondary : C.orange }]}>
+            {isStomachLimited
+              ? `Stomach full — next feed at ${progression.length > 0 ? fmtTimeStr(progression[0].readyAtMs, timeFormat) : '?'}`
+              : 'Well fed — all sizes available later'}
+          </Text>
+        );
+      })()}
+    </View>
+  );
+}
+
+// ── Main Dashboard ─────────────────────────────────────────────────────────────
+
+export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [settings, setSettings] = useState<Settings>({
     weightKg: 6.27,
@@ -247,353 +542,226 @@ export default function DashboardScreen({ navigation }: any) {
     redThresholdPct: 10,
     timeFormat: '24h',
   });
-  const [showSmoothedExplainer, setShowSmoothedExplainer] = useState(false);
-  const [showStrictExplainer, setShowStrictExplainer] = useState(false);
+  const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [now, setNow] = useState(Date.now());
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
-    const [f, s] = await Promise.all([getFeeds(), getSettings()]);
+    const [f, s, w] = await Promise.all([getFeeds(), getSettings(), getWeights()]);
     setFeeds(f);
     setSettings(s);
-    setNow(Date.now());
+    setWeights(w);
+    // Don't update 'now' here — only the timer tick updates it so status stays frozen
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       load();
-      intervalRef.current = setInterval(() => {
-        load();
-      }, 60000);
-      return () => {
-        if (intervalRef.current) clearInterval(intervalRef.current);
-      };
+      // Tick every 60s: only updates 'now' for relative time labels
+      intervalRef.current = setInterval(() => setNow(Date.now()), 60_000);
+      return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [load])
   );
 
   const derived = deriveSettings(settings);
 
-
   const lastFeed = feeds.length > 0
     ? feeds.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
     : null;
 
-  // Smoothed frozen at last-feed time — only changes when a new feed is logged
+  // Status is FROZEN at lastFeed.timestamp — not live
   const smoothedAt = lastFeed ? lastFeed.timestamp : now;
-  const strict24 = strict24hTotal(feeds, smoothedAt);
-  const strictPct = (strict24 / derived.dailyTargetMl) * 100;
-  const smoothedTotalMl = smoothedAtTime(feeds, derived.hourlyRate, smoothedAt);
-  const smoothedPct = (smoothedTotalMl / derived.dailyTargetMl) * 100;
+
+  const { totalMl: smoothedMl } = smoothedEffective(
+    feeds, derived.hourlyRate, settings.preferredBottleWaterMl, smoothedAt
+  );
+  const smoothedPct = (smoothedMl / derived.dailyTargetMl) * 100;
 
   const predictors: PredictorResult | null = computePredictors(
-    feeds,
-    derived.hourlyRate,
-    derived.dailyTargetMl,
-    settings.preferredBottleWaterMl
+    feeds, derived.hourlyRate, derived.dailyTargetMl, settings.preferredBottleWaterMl
   );
-  const nextTs = predictors?.predictorBTimestamp ?? null;
 
-  const feeds24h = feeds.filter(f => f.timestamp >= now - 86400000);
-  const mlPerHour = (derived.hourlyRate).toFixed(1);
+  // Stomach at live now (for StatusCard right column)
+  const capMilkVal = stomachCapMilk(settings.preferredBottleWaterMl, derived.hourlyRate);
+  const loadNow = stomachLoad(feeds, now);
+
+  const recentFeeds = [...feeds]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 3);
+
+  const y = settings.yellowThresholdPct;
+  const r = settings.redThresholdPct;
+  const tf = settings.timeFormat;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>🍼 MilkWise</Text>
-        <Text style={styles.subtitle}>
-          {settings.weightKg} kg · Target {derived.dailyTargetMl.toFixed(0)} ml/day
+        <View style={styles.headerLeft}>
+          <Text style={styles.title}>🍼 MilkWise</Text>
+          <Text style={styles.version}>v{APP_VERSION}</Text>
+        </View>
+        <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={styles.gearBtn}>
+          <Text style={styles.gearText}>⚙️</Text>
+        </TouchableOpacity>
+      </View>
+
+      <Text style={styles.subtitle}>
+        {settings.weightKg} kg · Target {Math.round(derived.dailyTargetMl)} ml/day
+      </Text>
+
+      {/* Log Feed button */}
+      <TouchableOpacity style={styles.logButton} onPress={() => navigation.navigate('Log')}>
+        <Text style={styles.logButtonText}>➕ Log Feed</Text>
+      </TouchableOpacity>
+
+      {/* 1. Status Card */}
+      <StatusCard
+        smoothedMl={smoothedMl}
+        smoothedPct={smoothedPct}
+        loadNow={loadNow}
+        capMilk={capMilkVal}
+        dailyTargetMl={derived.dailyTargetMl}
+        y={y}
+        r={r}
+        onExplain={() => {}}
+      />
+
+      {/* 2. Feeding Timeline */}
+      {predictors && (
+        <FeedingTimeline
+          feeds={feeds}
+          predictors={predictors}
+          preferredBottleWaterMl={settings.preferredBottleWaterMl}
+          now={now}
+          hourlyRate={derived.hourlyRate}
+          dailyTargetMl={derived.dailyTargetMl}
+          timeFormat={tf}
+        />
+      )}
+
+      {/* 3. Next Feed card (Predictor A) */}
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
+        {predictors ? (
+          <>
+            <Text style={styles.cardValue}>
+              {fmtTimeStr(predictors.predictorATimestamp, tf)}
+            </Text>
+            <Text style={styles.cardSub}>{formatRelative(predictors.predictorATimestamp, now)}</Text>
+            {predictors.predictorAVolumeWater > 0 ? (
+              <Text style={styles.cardMuted}>
+                {predictors.predictorAVolumeWater} ml water · {Math.round(predictors.predictorAVolumeMilk)} ml milk
+                {predictors.predictorACapped ? ' (capped)' : ''}
+                {predictors.predictorASurplus ? ' (surplus)' : ''}
+              </Text>
+            ) : (
+              <Text style={[styles.cardMuted, { color: C.orange }]}>Surplus — skip or offer smallest</Text>
+            )}
+          </>
+        ) : (
+          <Text style={styles.cardSub}>No feeds yet</Text>
+        )}
+      </View>
+
+      {/* 4. Daily Target card */}
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.cardLabel}>🎯 DAILY TARGET</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+          <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
+          <Text style={styles.cardMuted}>·</Text>
+          <Text style={[styles.cardValue, { fontSize: 15 }]}>
+            {settings.preferredBottleWaterMl} ml bottle
+            {(() => {
+              const h = Math.floor(derived.idealIntervalHours);
+              const m = Math.round((derived.idealIntervalHours - h) * 60);
+              return h > 0 ? ` every ${h}h ${m}m` : ` every ${m}m`;
+            })()}
+          </Text>
+        </View>
+        <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
+        <Text style={styles.cardMuted}>
+          Thresholds: ±{y}% yellow · ±{r}% red
         </Text>
       </View>
 
-      <TouchableOpacity
-        style={styles.logButton}
-        onPress={() => navigation.navigate('Log')}
-      >
-        <Text style={styles.logButtonText}>+ Log Feed</Text>
-      </TouchableOpacity>
-
-      {/* Status Cards */}
-      <View style={styles.row}>
-        {/* Strict 24h */}
-        <View style={[styles.card, styles.halfCard]}>
-          <View style={styles.rowSpaced}>
-            <Text style={styles.cardLabel}>Strict 24h</Text>
-            <TouchableOpacity onPress={() => setShowStrictExplainer(true)}>
-              <Text style={styles.questionBtn}>?</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={[styles.cardValue, { color: statusHexColor(strictPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
-            {strict24.toFixed(0)} ml
-          </Text>
-          <Text style={[styles.cardPct, { color: statusHexColor(strictPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
-            {strictPct.toFixed(0)}%
-          </Text>
-          <Text style={[styles.cardMuted, { color: statusHexColor(strictPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>{statusLabel(strictPct, settings.yellowThresholdPct, settings.redThresholdPct)}</Text>
-        </View>
-
-        {/* Smoothed 24h */}
-        <View style={[styles.card, styles.halfCard]}>
-          <View style={styles.rowSpaced}>
-            <Text style={styles.cardLabel}>Smoothed 24h</Text>
-            <TouchableOpacity onPress={() => setShowSmoothedExplainer(true)}>
-              <Text style={styles.questionBtn}>?</Text>
-            </TouchableOpacity>
-          </View>
-          <Text style={[styles.cardValue, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
-            {Math.round(smoothedTotalMl)} ml
-          </Text>
-          <Text style={[styles.cardPct, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>
-            {smoothedPct.toFixed(0)}%
-          </Text>
-          <Text style={[styles.cardMuted, { color: statusHexColor(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct) }]}>{statusLabel(smoothedPct, settings.yellowThresholdPct, settings.redThresholdPct)}</Text>
-        </View>
-      </View>
-
-      {/* Next / Last feed */}
-      <View style={styles.row}>
-        <View style={[styles.card, styles.halfCard]}>
-          <Text style={styles.cardLabel}>⏭ Next Feed</Text>
-          {nextTs ? (
-            <>
-              <Text style={styles.cardValue}>{formatDateTime(nextTs, settings.timeFormat)}</Text>
-              <Text style={styles.cardSub}>{formatRelative(nextTs, now)}</Text>
-              {predictors && lastFeed && (() => {
-                const standardIntervalMs = predictors.standardIntervalMs;
-                const idealNext = lastFeed.timestamp + standardIntervalMs;
-                const deltaMin = Math.round((nextTs - idealNext) / 60_000);
-                if (predictors.predictorBCapped) return (
-                  <Text style={[styles.cardMuted, { color: COLORS.yellow, fontWeight: '600' }]}>⚠️ max gap · +{Math.round((nextTs - idealNext) / 60_000)}m vs standard</Text>
-                );
-                if (deltaMin === 0) return (
-                  <Text style={styles.cardMuted}>on standard interval</Text>
-                );
-                return (
-                  <Text style={[styles.cardMuted, { color: deltaMin > 0 ? COLORS.yellow : COLORS.blue, fontWeight: '600' }]}>
-                    {deltaMin > 0 ? `+${deltaMin}m vs standard · overfed` : `${deltaMin}m vs standard · catch up`}
-                  </Text>
-                );
-              })()}
-
-            </>
-          ) : (
-            <Text style={styles.cardSub}>No feeds yet</Text>
-          )}
-        </View>
-
-        <View style={[styles.card, styles.halfCard]}>
-          <Text style={styles.cardLabel}>🕐 Last Feed</Text>
-          {lastFeed ? (
-            <>
-              <Text style={styles.cardValue}>{formatDateTime(lastFeed.timestamp, settings.timeFormat)}</Text>
-              <Text style={styles.cardSub}>{lastFeed.volume} ml</Text>
-              <Text style={styles.cardMuted}>{formatRelative(lastFeed.timestamp, now)}</Text>
-            </>
-          ) : (
-            <Text style={styles.cardSub}>No feeds yet</Text>
-          )}
-        </View>
-      </View>
-
-      {/* Daily target */}
+      {/* 5. Last 3 feeds */}
       <View style={[styles.card, { marginBottom: 12 }]}>
-        <Text style={styles.cardLabel}>🎯 Daily Target</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-          <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
-          <Text style={styles.cardMuted}>·</Text>
-          <Text style={[styles.cardValue, { fontSize: 16 }]}>{settings.preferredBottleWaterMl} ml bottle {(() => { const h = Math.floor(derived.idealIntervalHours); const m = Math.round((derived.idealIntervalHours - h) * 60); return h > 0 ? `every ${h}h ${m}m` : `every ${m}m`; })()}</Text>
-        </View>
-        <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
-      </View>
-
-      {/* Summary row */}
-      <View style={styles.card}>
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{feeds.length}</Text>
-            <Text style={styles.summaryLabel}>Total feeds</Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{feeds24h.length}</Text>
-            <Text style={styles.summaryLabel}>Last 24h</Text>
-          </View>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryValue}>{mlPerHour}</Text>
-            <Text style={styles.summaryLabel}>ml/hour</Text>
-          </View>
-        </View>
-      </View>
-
-      <Modal visible={showStrictExplainer} animationType="slide" transparent onRequestClose={() => setShowStrictExplainer(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Strict 24h — how it works</Text>
-              <TouchableOpacity onPress={() => setShowStrictExplainer(false)}><Text style={styles.closeBtn}>×</Text></TouchableOpacity>
+        <Text style={styles.cardLabel}>🍼 RECENT FEEDS</Text>
+        {recentFeeds.length === 0 ? (
+          <Text style={styles.cardSub}>No feeds yet</Text>
+        ) : (
+          recentFeeds.map((f) => (
+            <View key={f.id} style={styles.feedRow}>
+              <Text style={styles.feedTime}>{fmtTimeStr(f.timestamp, tf)}</Text>
+              <Text style={styles.feedRelative}>{formatRelative(f.timestamp, now)}</Text>
+              <Text style={styles.feedVol}>{f.volume} ml</Text>
             </View>
-            <ScrollView style={{ maxHeight: 460 }}>
-              <Text style={styles.explainerHeading}>Water ml vs. prepared formula ml</Text>
-              <Text style={styles.explainerText}>You log bottles in <Text style={styles.bold}>water ml</Text>. But the 150 ml/kg/day target is in <Text style={styles.bold}>prepared formula ml</Text> (after mixing powder + water). The conversion ratio varies by bottle size. Values in the table are exact; in between is interpolated (e.g. 105 ml → {waterToMilk(105).toFixed(0)} ml formula). The app converts all logged volumes automatically.</Text>
-
-              <Text style={styles.explainerHeading}>What is this?</Text>
-              <Text style={styles.explainerText}>The Strict 24h value is the sum of all milk your baby actually drank in the last 24 hours, counted from the most recent feed.</Text>
-              <Text style={styles.explainerText}>This is the method paediatricians and health visitors commonly use to check whether a baby is getting enough nutrition over a day.</Text>
-
-              <Text style={[styles.explainerHeading, { marginTop: 16 }]}>Why it fluctuates so much</Text>
-              <Text style={styles.explainerText}>Because it uses a hard 24-hour cutoff, the number can drop sharply the moment a feed ‘falls off’ the window — even if the baby is perfectly well fed. A large bottle from 25 hours ago contributes zero, while the same bottle at 23 hours ago counts in full.</Text>
-              <Text style={styles.explainerText}>This makes it hard to use in practice for parents trying to actively manage feeds throughout the day.</Text>
-              <Text style={[styles.explainerText, { color: COLORS.textSecondary }]}>That’s why this app also shows the <Text style={{ color: COLORS.textPrimary, fontWeight: '600' }}>Smoothed 24h</Text> value, which gives each bottle a gradually decaying credit instead of a hard cutoff.</Text>
-
-              <Text style={[styles.explainerHeading, { marginTop: 16 }]}>The formula</Text>
-              <View style={styles.formulaBox}>
-                <Text style={styles.formulaText}>Strict 24h = Σ volume of all feeds in the last 24 hours</Text>
-              </View>
-            </ScrollView>
-            <TouchableOpacity style={styles.gotItBtn} onPress={() => setShowStrictExplainer(false)}>
-              <Text style={styles.gotItText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <SmoothedExplainerModal
-        visible={showSmoothedExplainer}
-        onClose={() => setShowSmoothedExplainer(false)}
-        hourlyRate={derived.hourlyRate}
-        standardBottleVolume={settings.preferredBottleWaterMl}
-        dailyTargetMl={derived.dailyTargetMl}
-        feeds={feeds}
-        now={smoothedAt}
-        yellowThresholdPct={settings.yellowThresholdPct}
-        redThresholdPct={settings.redThresholdPct}
-      />
+          ))
+        )}
+      </View>
     </ScrollView>
   );
 }
 
+// ── Styles ─────────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  content: { padding: 16, paddingBottom: 32 },
-  header: { marginBottom: 20, alignItems: 'center' },
-  title: { fontSize: 28, fontWeight: '700', color: COLORS.textPrimary },
-  subtitle: { fontSize: 14, color: COLORS.textSecondary, marginTop: 4 },
-  logButton: {
-    backgroundColor: COLORS.blue,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  logButtonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
-  row: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  card: {
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-  },
-  halfCard: { flex: 1, marginBottom: 0 },
-  cardLabel: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  cardValue: { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary },
-  cardPct: { fontSize: 16, fontWeight: '600', marginTop: 2 },
-  cardSub: { fontSize: 12, color: COLORS.textSecondary, marginTop: 4 },
-  cardMuted: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-  rowSpaced: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  questionBtn: {
-    color: COLORS.blue,
-    fontSize: 14,
-    fontWeight: '700',
-    borderWidth: 1,
-    borderColor: COLORS.blue,
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-around' },
-  summaryItem: { alignItems: 'center' },
-  summaryValue: { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary },
-  summaryLabel: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: COLORS.card,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 24,
-    maxHeight: '90%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: COLORS.textPrimary, flex: 1, marginRight: 12 },
-  modalClose: { fontSize: 22, color: COLORS.textSecondary },
-  explainerSection: { marginBottom: 20 },
-  explainerHeading: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary, marginBottom: 6 },
-  explainerText: { fontSize: 13, color: '#cbd5e1', lineHeight: 20 },
-  bold: { fontWeight: '700', color: COLORS.textPrimary },
-  italic: { fontStyle: 'italic' },
-  exampleBox: {
-    backgroundColor: 'rgba(100,116,139,0.25)',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 8,
-  },
-  exampleText: { fontSize: 12, color: COLORS.textSecondary, lineHeight: 18 },
-  feedTable: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  feedTableRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  feedTableHeader: { backgroundColor: 'rgba(100,116,139,0.2)' },
-  feedTableRowBorder: { borderTopWidth: 1, borderTopColor: 'rgba(51,65,85,0.5)' },
-  feedTableCell: { flex: 1, fontSize: 12, color: COLORS.textPrimary },
-  totalsBox: {
-    backgroundColor: 'rgba(100,116,139,0.15)',
-    borderRadius: 8,
-    padding: 12,
-  },
-  totalsRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-  totalsLabel: { fontSize: 12, color: COLORS.textSecondary },
-  totalsValue: { fontSize: 12, color: COLORS.textPrimary, fontWeight: '600' },
-  modalDismissBtn: {
-    backgroundColor: COLORS.border,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 8,
-  },
-  modalDismissBtnText: { color: COLORS.textPrimary, fontSize: 15, fontWeight: '600' },
-  closeBtn: { fontSize: 22, color: COLORS.textSecondary, paddingHorizontal: 4 },
-  formulaBox: {
-    backgroundColor: 'rgba(100,116,139,0.2)',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  formulaText: { fontSize: 13, color: COLORS.textPrimary, fontFamily: 'monospace' },
-  gotItBtn: {
-    backgroundColor: COLORS.border,
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  gotItText: { color: COLORS.textPrimary, fontSize: 15, fontWeight: '600' },
+  container:   { flex: 1, backgroundColor: C.bg },
+  content:     { padding: 16, paddingBottom: 40 },
+
+  header:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  headerLeft:  { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  title:       { fontSize: 24, fontWeight: '700', color: C.textPrimary },
+  version:     { fontSize: 11, color: C.textMuted },
+  gearBtn:     { padding: 4 },
+  gearText:    { fontSize: 20 },
+  subtitle:    { fontSize: 13, color: C.textSecondary, marginBottom: 12 },
+
+  logButton:       { backgroundColor: C.blue, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 16 },
+  logButtonText:   { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  card:        { backgroundColor: C.card, borderRadius: 12, padding: 14, borderColor: C.cardBorder, borderWidth: 1 },
+  cardLabel:   { fontSize: 11, color: C.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.6 },
+  cardValue:   { fontSize: 20, fontWeight: '700', color: C.textPrimary },
+  cardSub:     { fontSize: 13, color: C.textSecondary, marginTop: 2 },
+  cardMuted:   { fontSize: 12, color: C.textMuted, marginTop: 3 },
+  rowSpaced:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+
+  questionCircle:     { width: 18, height: 18, borderRadius: 9, backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' },
+  questionCircleText: { color: C.textSecondary, fontSize: 11, fontWeight: '700', lineHeight: 14 },
+
+  // StatusCard
+  statusCols:     { flexDirection: 'row', gap: 12 },
+  statusLeft:     { flex: 1, alignItems: 'center' },
+  statusRight:    { flex: 1, alignItems: 'center' },
+  statusColLabel: { fontSize: 10, color: C.textSecondary, marginBottom: 6, textAlign: 'center' },
+  statusBigNum:   { fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 4 },
+  statusBigUnit:  { fontSize: 13, fontWeight: '400' },
+  statusSmall:    { fontSize: 12, fontWeight: '600', textAlign: 'center', marginTop: 2 },
+  statusDelta:    { fontSize: 11, color: C.textMuted, textAlign: 'center' },
+
+  gaugeContainer: { alignItems: 'center', marginVertical: 4 },
+  gaugeBar:       { width: 26, height: 60, borderRadius: 6, borderWidth: 2, borderColor: '#475569', overflow: 'hidden', justifyContent: 'flex-end', position: 'relative' },
+  gaugeFill:      { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  gaugeTargetLine:{ position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: 'rgba(255,255,255,0.4)', bottom: '50%' },
+
+  stomachVessel:  { width: 26, height: 60, borderWidth: 2, borderColor: '#475569', borderRadius: 6, overflow: 'hidden', justifyContent: 'flex-end', position: 'relative', marginVertical: 4, borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
+  stomachEmpty:   { position: 'absolute', top: 0, left: 0, right: 0, backgroundColor: 'rgba(20,184,166,0.13)' },
+  stomachFill:    { position: 'absolute', bottom: 0, left: 0, right: 0 },
+
+  twinBars:       { flexDirection: 'row', gap: 12, marginTop: 10 },
+  twinBarTrack:   { flex: 1, height: 5, backgroundColor: '#334155', borderRadius: 3, overflow: 'hidden' },
+  twinBarFill:    { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 3 },
+  twinBarTarget:  { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: 'rgba(255,255,255,0.3)', left: `${(100/130)*100}%` as any },
+
+  // Timeline
+  timelineStrip:  { position: 'absolute', top: 0, left: 0, right: 0, height: 2, backgroundColor: C.rose, borderTopLeftRadius: 12, borderTopRightRadius: 12 },
+  timelineNote:   { fontSize: 11, marginTop: 6 },
+
+  // Feed rows
+  feedRow:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#1e293b' },
+  feedTime:       { fontSize: 14, fontWeight: '600', color: C.textPrimary, width: 60 },
+  feedRelative:   { flex: 1, fontSize: 12, color: C.textSecondary },
+  feedVol:        { fontSize: 14, fontWeight: '600', color: C.textPrimary },
 });
