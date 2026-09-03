@@ -24,6 +24,7 @@ import Constants from 'expo-constants';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Line, Circle, Rect, G, Text as SvgText, Polygon } from 'react-native-svg';
 import { getFeeds, getSettings, getWeights, saveSettings } from '../lib/store';
+import { predictWeightKg } from '../lib/whoGrowth';
 import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
   deriveSettings,
@@ -558,6 +559,8 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   });
   const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [now, setNow] = useState(Date.now());
+  const [effectiveWeightKg, setEffectiveWeightKg] = useState<number>(6.27);
+  const [weightSource, setWeightSource] = useState<'manual' | 'who' | 'settings'>('settings');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -565,6 +568,38 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     setFeeds(f);
     setSettings(s);
     setWeights(w);
+
+    // WHO weight model — mirrors web app page.tsx
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayMs = startOfToday.getTime();
+
+    let newEffectiveWeightKg = s.weightKg;
+    let newWeightSource: 'manual' | 'who' | 'settings' = 'settings';
+
+    if (w.length > 0) {
+      const latestWeight = [...w].sort((a, b) => b.timestamp - a.timestamp)[0];
+      const daysSinceLast = (startOfTodayMs - latestWeight.timestamp) / 86_400_000;
+      if (daysSinceLast <= 7) {
+        newEffectiveWeightKg = latestWeight.weightKg;
+        newWeightSource = 'manual';
+      } else if (s.dateOfBirthMs && s.sex) {
+        const predicted = predictWeightKg(w, s.dateOfBirthMs, s.sex, startOfTodayMs);
+        if (predicted !== null) {
+          newEffectiveWeightKg = predicted;
+          newWeightSource = 'who';
+        } else {
+          newEffectiveWeightKg = latestWeight.weightKg;
+          newWeightSource = 'manual';
+        }
+      } else {
+        newEffectiveWeightKg = latestWeight.weightKg;
+        newWeightSource = 'manual';
+      }
+    }
+
+    setEffectiveWeightKg(newEffectiveWeightKg);
+    setWeightSource(newWeightSource);
     // Don't update 'now' here — only the timer tick updates it so status stays frozen
   }, []);
 
@@ -576,15 +611,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [load])
   );
-
-  // Issue 6: Effective weight from most recent weight entry (≤7 days old)
-  const SEVEN_DAYS_MS = 7 * 24 * 3_600_000;
-  const sortedWeights = [...weights].sort((a, b) => b.timestamp - a.timestamp);
-  const latestWeight = sortedWeights[0];
-  const effectiveWeightKg =
-    latestWeight && (now - latestWeight.timestamp) <= SEVEN_DAYS_MS
-      ? latestWeight.weightKg
-      : settings.weightKg;
 
   const derived = deriveSettings({ ...settings, weightKg: effectiveWeightKg });
 
@@ -630,7 +656,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       </View>
 
       <Text style={styles.subtitle}>
-        {settings.weightKg} kg · Target {Math.round(derived.dailyTargetMl)} ml/day
+        {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO' : weightSource === 'manual' ? 'measured' : 'settings'}) · Target {Math.round(derived.dailyTargetMl)} ml/day
       </Text>
 
       {/* 1. Status Card */}
@@ -658,42 +684,34 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         />
       )}
 
-      {/* 3. Next Feed card (advised from canTakeProgression) */}
+      {/* 3. Next Feed card — shows when preferred bottle size is next available */}
       <View style={[styles.card, { marginBottom: 12 }]}>
         <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
         {(() => {
           const prog = canTakeProgression(feeds, settings.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
-          const advised = prog.find(e => e.isAdvised);
-          const fitsNowList = prog.filter(e => e.fitsNow);
-          const nextFuture = prog.filter(e => !e.fitsNow).sort((a, b) => a.readyAtMs - b.readyAtMs)[0];
+          // Find the entry for the preferred bottle size specifically
+          const preferredEntry = prog.find(e => e.waterMl === settings.preferredBottleWaterMl);
 
-          if (advised) {
+          if (!preferredEntry) {
+            return <Text style={styles.cardSub}>No feeds yet</Text>;
+          }
+
+          if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
             return (
               <>
-                <Text style={[styles.cardValue, { color: C.green }]}>{fmtTimeStr(now, tf)}</Text>
-                <Text style={[styles.cardSub, { color: C.green }]}>now</Text>
-                <Text style={styles.cardMuted}>{advised.waterMl} ml water 🍼</Text>
-              </>
-            );
-          } else if (fitsNowList.length > 0) {
-            const entry = fitsNowList[fitsNowList.length - 1];
-            return (
-              <>
-                <Text style={styles.cardValue}>{fmtTimeStr(now, tf)}</Text>
-                <Text style={styles.cardSub}>now</Text>
-                <Text style={styles.cardMuted}>{entry.waterMl} ml water 🍼</Text>
-              </>
-            );
-          } else if (nextFuture) {
-            return (
-              <>
-                <Text style={styles.cardValue}>{fmtTimeStr(nextFuture.readyAtMs, tf)}</Text>
-                <Text style={styles.cardSub}>{formatRelative(nextFuture.readyAtMs, now)}</Text>
-                <Text style={styles.cardMuted}>{nextFuture.waterMl} ml water 🍼</Text>
+                <Text style={[styles.cardValue, { color: C.green }]}>Now · {settings.preferredBottleWaterMl} 🍼</Text>
+                <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
               </>
             );
           } else {
-            return <Text style={styles.cardSub}>No feeds yet</Text>;
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.rose }]}>
+                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {settings.preferredBottleWaterMl} 🍼
+                </Text>
+                <Text style={[styles.cardSub, { color: C.rose }]}>{formatRelative(preferredEntry.readyAtMs, now)}</Text>
+              </>
+            );
           }
         })()}
       </View>
@@ -751,7 +769,9 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           <Text style={styles.editRowText}>{settings.preferredBottleWaterMl} ml 🍼 preferred</Text>
           <Text style={styles.editIcon}>✏️</Text>
         </TouchableOpacity>
-        <Text style={styles.cardMuted}>{effectiveWeightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
+        <Text style={styles.cardMuted}>
+            {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO est.' : weightSource === 'manual' ? 'measured' : 'settings'}) × {settings.mlPerKgPerDay} ml/kg/day
+          </Text>
         <Text style={styles.cardMuted}>
           Thresholds: ±{y}% yellow · ±{r}% red
         </Text>
