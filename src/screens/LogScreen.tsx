@@ -43,7 +43,7 @@ function nowTimeStr(): string {
 }
 
 export default function LogScreen({ navigation }: any) {
-  const [volume, setVolume] = useState('90');
+  const [volume, setVolume] = useState('');  // will be set after settings load
   const [inputUnit, setInputUnit] = useState<'water' | 'milk'>('water');
   const [date, setDate] = useState(todayStr());
   const [time, setTime] = useState(nowTimeStr());
@@ -55,6 +55,7 @@ export default function LogScreen({ navigation }: any) {
     const sorted = [...feeds].sort((a, b) => b.timestamp - a.timestamp);
     setRecentFeeds(sorted.slice(0, 3));
     setSettings(s);
+    setVolume((prev) => (!prev || prev === '90' ? String(s.preferredBottleWaterMl) : prev));
     // Reset time to now
     setDate(todayStr());
     setTime(nowTimeStr());
