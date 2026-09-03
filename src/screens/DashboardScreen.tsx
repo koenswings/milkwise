@@ -4,7 +4,7 @@
  * Layout (top→bottom):
  *   1. Header: MilkWise + version + settings gear
  *   2. Status card (smoothed intake + stomach vessel)
- *   3. Feeding Timeline (horizontal scrollable SVG, react-native-svg)
+ *   3. Feeding Timeline (horizontal scrollable native View/ScrollView)
  *   4. Next Feed card (Predictor A)
  *   5. Daily Target card
  *   6. Last 3 feeds list
