@@ -419,8 +419,8 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
         <View style={styles.questionCircle}><Text style={styles.questionCircleText}>?</Text></View>
       </View>
 
-      <View style={{ height: 160 }}>
-      <ScrollView horizontal={true} scrollEnabled={true} showsHorizontalScrollIndicator={false} nestedScrollEnabled style={{ marginTop: 4 }}>
+      <View style={{ height: 160, overflow: 'hidden' }}>
+      <ScrollView horizontal={true} scrollEnabled={true} showsHorizontalScrollIndicator={false} nestedScrollEnabled style={{ height: 150, marginTop: 4 }}>
         <Svg width={SCROLL_W} height={SVG_H} viewBox={`0 0 ${SCROLL_W} ${SVG_H}`}>
           {/* Epoch bands */}
           {gastricBands.map((b, i) => {
