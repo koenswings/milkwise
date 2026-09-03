@@ -19,6 +19,7 @@
       "buildNumber": "9"
     },
     "android": {
+      "package": "com.koenswings.milkwise",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
