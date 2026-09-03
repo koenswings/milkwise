@@ -17,32 +17,26 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Dimensions,
   Alert,
 } from 'react-native';
 import Constants from 'expo-constants';
 import { useFocusEffect } from '@react-navigation/native';
-import Svg, { Line, Circle, Rect, G, Text as SvgText, Polygon } from 'react-native-svg';
+
 import { getFeeds, getSettings, getWeights, saveSettings } from '../lib/store';
 import { predictWeightKg } from '../lib/whoGrowth';
 import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
   deriveSettings,
   strict24hTotal,
-  smoothedAtTime,
   smoothedEffective,
-  waterToMilk,
-  FORMULA_TABLE,
-  computePredictors,
   stomachCapMilk,
   stomachLoad,
   canTakeProgression,
   stomachReadyAtMs,
   ghostIntakeReadyAtMs,
-  STOMACH_K,
   statusHexColor,
 } from '../lib/calculations';
-import { Feed, Settings, WeightEntry, PredictorResult } from '../types';
+import { Feed, Settings, WeightEntry } from '../types';
 
 const APP_VERSION = Constants.expoConfig?.version ?? '1.1';
 
@@ -104,15 +98,6 @@ function fmtTimeStr(ms: number, tf: '24h' | '12h'): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${ampm ? ' ' + ampm : ''}`;
 }
 
-const SCREEN_W = Dimensions.get('window').width;
-const STANDARD_SIZES = new Set(FORMULA_TABLE.map(e => e.water));
-const NEAR_ZERO_ML = 5;
-
-function gastricClearMs(feedTs: number, volumeWaterMl: number): number {
-  const milkMl = waterToMilk(volumeWaterMl);
-  const hours = Math.log(Math.max(milkMl, NEAR_ZERO_ML + 0.1) / NEAR_ZERO_ML) / STOMACH_K;
-  return feedTs + hours * 3_600_000;
-}
 
 // ── StatusCard ─────────────────────────────────────────────────────────────────
 
@@ -213,7 +198,6 @@ function StatusCard({ smoothedMl, smoothedPct, loadNow, capMilk, dailyTargetMl, 
 
 interface TimelineProps {
   feeds: Feed[];
-  predictors: PredictorResult;
   preferredBottleWaterMl: number;
   now: number;
   hourlyRate: number;
@@ -221,188 +205,84 @@ interface TimelineProps {
   timeFormat: '24h' | '12h';
 }
 
-const TIMELINE_PAD = 24;
-const TRACK_Y      = 82;
-const LABEL_BASE_Y = TRACK_Y - 28;
-const LABEL_LIFT_Y = TRACK_Y - 50;
-const TIME_BASE_Y  = TRACK_Y + 18;
-const TIME_DROP_Y  = TRACK_Y + 34;
-const HOUR_TICK_Y  = TRACK_Y + 4;
-const HOUR_LABEL_Y = TRACK_Y + 22;
-const SVG_H        = TRACK_Y + 60;
-const HALF_HOUR_MS = 30 * 60_000;
-const HOUR_MS      = 60 * 60_000;
-
-function fmtHour(ms: number, tf: '24h' | '12h'): string {
-  const d = new Date(ms);
-  let h = d.getHours();
-  if (tf === '12h') {
-    const sfx = h >= 12 ? 'p' : 'a';
-    h = h % 12 || 12;
-    return `${h}${sfx}`;
-  }
-  return `${String(h).padStart(2, '0')}:00`;
-}
-
-function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat }: TimelineProps) {
-  const cardW = SCREEN_W - 32; // account for screen padding
+function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat }: Omit<TimelineProps, 'predictors'>) {
+  const lastFeed = feeds.length > 0 ? feeds.reduce((a, b) => a.timestamp > b.timestamp ? a : b) : null;
 
   const progression = canTakeProgression(feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl);
-  const lastFeed = feeds.length > 0 ? feeds.reduce((a, b) => a.timestamp > b.timestamp ? a : b) : null;
-  const lastFeedIsNonStandard = lastFeed ? !STANDARD_SIZES.has(lastFeed.volume) : false;
 
-  // Ghost readyAt: use lastFeed.timestamp as reference (CRITICAL)
+  // Ghost readyAt: computed from lastFeed.timestamp
   const ghostReadyAt = new Map<number, number>();
   if (lastFeed) {
-    const sizes = [...new Set([...progression.map(e => e.waterMl), ...FORMULA_TABLE.map(e => e.water)])];
-    for (const wml of sizes) {
-      const sMs = stomachReadyAtMs(feeds, wml, preferredBottleWaterMl, lastFeed.timestamp, hourlyRate);
-      const iMs = ghostIntakeReadyAtMs(feeds, wml, hourlyRate, dailyTargetMl, lastFeed.timestamp);
-      ghostReadyAt.set(wml, Math.max(sMs, iMs));
+    for (const e of progression) {
+      const sMs = stomachReadyAtMs(feeds, e.waterMl, preferredBottleWaterMl, lastFeed.timestamp, hourlyRate);
+      const iMs = ghostIntakeReadyAtMs(feeds, e.waterMl, hourlyRate, dailyTargetMl, lastFeed.timestamp);
+      ghostReadyAt.set(e.waterMl, Math.max(sMs, iMs));
     }
-  } else {
-    progression.forEach(e => ghostReadyAt.set(e.waterMl, e.readyAtMs));
   }
 
-  const allFuture = progression.length > 0 && !progression.some(e => e.fitsNow);
-
-  // Timeline bounds
-  const LOOKBACK_MS = 12 * 3_600_000;
-  const earliestFeed = feeds.length > 0 ? Math.min(...feeds.map(f => f.timestamp)) : now - LOOKBACK_MS;
-  const T_START = Math.min(earliestFeed, now - LOOKBACK_MS) - 20 * 60_000;
-
-  const latestProg = progression.length > 0 ? Math.max(...progression.map(e => e.readyAtMs)) : now + 60 * 60_000;
-  const lastGastricEnd = lastFeed ? gastricClearMs(lastFeed.timestamp, lastFeed.volume) : now;
-  const T_END = Math.max(latestProg, lastGastricEnd) + 25 * 60_000;
-  const spanMs = T_END - T_START;
-
-  // Scale: at minimum show a 96px gap between 30-min markers
-  const capMilkVal = predictors.stomachCapMilk;
-  const t30DecayMs = capMilkVal > 30 ? (-Math.log(1 - 30 / capMilkVal) / STOMACH_K) * 3_600_000 : 20 * 60_000;
-  const LABEL_MIN_GAP_PX = 96;
-  const minScale = LABEL_MIN_GAP_PX / t30DecayMs;
-  const autoScale = (cardW - TIMELINE_PAD) / spanMs;
-  const scale = Math.max(autoScale, minScale);
-
-  const SCROLL_W = Math.ceil(spanMs * scale) + TIMELINE_PAD;
-
-  function px(ms: number): number {
-    return TIMELINE_PAD / 2 + Math.round((ms - T_START) * scale);
+  // Build marker list
+  interface Marker {
+    label: string;
+    time: string;
+    dotColor: string;
+    fillDot: boolean;
+    header?: string;
   }
 
-  // Hour ticks
-  const hourTicks: { ms: number; isHour: boolean }[] = [];
-  const tickStart = Math.ceil(T_START / HALF_HOUR_MS) * HALF_HOUR_MS;
-  for (let t = tickStart; t <= T_END; t += HALF_HOUR_MS) {
-    hourTicks.push({ ms: t, isHour: t % HOUR_MS === 0 });
-  }
-  const showHourLabels = HOUR_MS * scale >= 28;
-  const showHalfTicks  = HALF_HOUR_MS * scale >= 6;
+  const markers: Marker[] = [];
 
-  // Sorted feeds for band computation
-  const sortedFeeds = [...feeds].filter(f => f.timestamp <= now + 60_000).sort((a, b) => a.timestamp - b.timestamp);
-  interface GastricBand { feedMs: number; gastricEndMs: number; epochEndMs: number; index: number; }
-  const gastricBands: GastricBand[] = sortedFeeds.map((f, i) => ({
-    feedMs: f.timestamp,
-    gastricEndMs: gastricClearMs(f.timestamp, f.volume),
-    epochEndMs: sortedFeeds[i + 1] ? sortedFeeds[i + 1].timestamp : T_END,
-    index: i,
-  }));
-
-  const EPOCH_BG   = ['rgba(45,212,191,0.06)', 'rgba(148,163,184,0.05)'];
-  const GASTRIC_BG = ['rgba(45,212,191,0.15)', 'rgba(100,116,139,0.13)'];
-
-  // Build markers
-  interface Marker { ms: number; x: number; numStr: string; showBottle: boolean; header: string; time: string; dotColor: string; labelColor: string; fillDot: boolean; }
-  const allMarkers: Marker[] = [];
-
-  // Past feeds (not lastFeed)
-  [...feeds].filter(f => f !== lastFeed).sort((a, b) => a.timestamp - b.timestamp).forEach(f => {
-    const isNS = !STANDARD_SIZES.has(f.volume);
-    allMarkers.push({
-      ms: f.timestamp, x: px(f.timestamp),
-      numStr: isNS ? `${Math.round(waterToMilk(f.volume))}` : `${f.volume}`,
-      showBottle: !isNS, header: '', time: fmtTimeStr(f.timestamp, timeFormat),
-      dotColor: '#475569', labelColor: '#94a3b8', fillDot: true,
-    });
-  });
-
-  // Last feed
+  // Last feed marker
   if (lastFeed) {
-    const isNS = lastFeedIsNonStandard;
-    allMarkers.push({
-      ms: lastFeed.timestamp, x: px(lastFeed.timestamp),
-      numStr: isNS ? `${Math.round(waterToMilk(lastFeed.volume))}` : `${lastFeed.volume}`,
-      showBottle: !isNS, header: 'Last Feed', time: fmtTimeStr(lastFeed.timestamp, timeFormat),
-      dotColor: '#475569', labelColor: '#94a3b8', fillDot: true,
+    markers.push({
+      label: `${lastFeed.volume} 🍼`,
+      time: fmtTimeStr(lastFeed.timestamp, timeFormat),
+      dotColor: '#475569',
+      fillDot: true,
+      header: 'Last feed',
     });
   }
 
-  // Progression markers
-  progression.forEach(e => {
-    if (e.isAdvised) {
-      // Ghost marker (from lastFeed.timestamp reference)
-      const ghostMs = ghostReadyAt.get(e.waterMl) ?? (lastFeed?.timestamp ?? e.readyAtMs);
-      allMarkers.push({
-        ms: ghostMs, x: px(ghostMs),
-        numStr: `${e.waterMl}`, showBottle: true, header: '', time: fmtTimeStr(ghostMs, timeFormat),
-        dotColor: '#475569', labelColor: '#64748b', fillDot: false,
+  // Ghost markers (fitsNow but not advised)
+  for (const e of progression) {
+    const ghostMs = ghostReadyAt.get(e.waterMl) ?? (lastFeed?.timestamp ?? e.readyAtMs);
+    if (e.fitsNow && !e.isAdvised) {
+      markers.push({
+        label: `${e.waterMl} 🍼`,
+        time: fmtTimeStr(ghostMs, timeFormat),
+        dotColor: '#475569',
+        fillDot: false,
       });
-      // Advised marker at now (green)
-      allMarkers.push({
-        ms: now, x: px(now),
-        numStr: `${e.waterMl}`, showBottle: true, header: 'Give now', time: 'now',
-        dotColor: C.green, labelColor: C.green, fillDot: true,
+    } else if (e.isAdvised) {
+      // Ghost first
+      markers.push({
+        label: `${e.waterMl} 🍼`,
+        time: fmtTimeStr(ghostMs, timeFormat),
+        dotColor: '#475569',
+        fillDot: false,
       });
-    } else if (e.fitsNow) {
-      const ghostMs = ghostReadyAt.get(e.waterMl) ?? (lastFeed?.timestamp ?? e.readyAtMs);
-      allMarkers.push({
-        ms: ghostMs, x: px(ghostMs),
-        numStr: `${e.waterMl}`, showBottle: true, header: '', time: fmtTimeStr(ghostMs, timeFormat),
-        dotColor: '#475569', labelColor: '#64748b', fillDot: false,
+      // Then advised at now
+      markers.push({
+        label: `${e.waterMl} 🍼`,
+        time: 'now',
+        dotColor: '#4ade80',
+        fillDot: true,
+        header: 'Give now',
       });
     } else {
+      // Future
       const isAbove = e.waterMl > preferredBottleWaterMl;
-      allMarkers.push({
-        ms: e.readyAtMs, x: px(e.readyAtMs),
-        numStr: `${e.waterMl}`, showBottle: true, header: '', time: fmtTimeStr(e.readyAtMs, timeFormat),
-        dotColor: isAbove ? C.teal : C.rose, labelColor: isAbove ? C.teal : C.rose, fillDot: false,
+      markers.push({
+        label: `${e.waterMl} 🍼`,
+        time: fmtTimeStr(e.readyAtMs, timeFormat),
+        dotColor: isAbove ? '#2dd4bf' : '#f43f5e',
+        fillDot: false,
       });
     }
-  });
-
-  allMarkers.sort((a, b) => a.ms - b.ms);
-
-  // Collision lifting
-  const FS_LABEL  = 15;
-  const FS_TIME   = 12;
-  const FS_HEADER = 11;
-  const FS_HOUR   = 9;
-
-  function approxW(text: string, fs: number): number { return text.length * fs * 0.62; }
-  const halfW = allMarkers.map(m => approxW(m.numStr, FS_LABEL) / 2 + (m.showBottle ? FS_LABEL * 0.7 : 0));
-  const timeHW = allMarkers.map(m => approxW(m.time, FS_TIME) / 2);
-
-  const lifted = allMarkers.map(() => false);
-  for (let i = 1; i < allMarkers.length; i++) {
-    if (allMarkers[i].x - halfW[i] < allMarkers[i-1].x + halfW[i-1] + 6) {
-      lifted[i] = !lifted[i-1];
-      if (lifted[i-1]) lifted[i] = false;
-    }
-  }
-  const timeDrop = allMarkers.map(() => false);
-  for (let i = 1; i < allMarkers.length; i++) {
-    if (allMarkers[i].x - timeHW[i] < allMarkers[i-1].x + timeHW[i-1] + 6) {
-      timeDrop[i] = !timeDrop[i-1];
-    }
   }
 
-  const nowX = px(now);
-
-  if (!lastFeed && progression.length === 0) {
+  if (markers.length === 0) {
     return (
       <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }]}>
-        <View style={styles.timelineStrip} />
         <Text style={styles.cardLabel}>FEEDING TIMELINE</Text>
         <Text style={[styles.cardSub, { marginTop: 8 }]}>No feeds yet</Text>
       </View>
@@ -410,137 +290,32 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
   }
 
   return (
-    <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12, minHeight: 160 }]}>
-      {/* Gradient top strip via View */}
-      <View style={styles.timelineStrip} />
-
-      <View style={styles.rowSpaced}>
-        <Text style={styles.cardLabel}>FEEDING TIMELINE</Text>
-        <View style={styles.questionCircle}><Text style={styles.questionCircleText}>?</Text></View>
-      </View>
-
-      <View style={{ height: 160, overflow: 'hidden' }}>
-      <ScrollView horizontal={true} scrollEnabled={true} showsHorizontalScrollIndicator={false} nestedScrollEnabled style={{ height: 150, marginTop: 4 }}>
-        <Svg width={SCROLL_W} height={SVG_H} viewBox={`0 0 ${SCROLL_W} ${SVG_H}`}>
-          {/* Epoch bands */}
-          {gastricBands.map((b, i) => {
-            const x1 = Math.max(0, px(b.feedMs));
-            const x2 = Math.min(SCROLL_W, px(b.epochEndMs));
-            if (x2 <= x1) return null;
-            return <Rect key={`ep-${i}`} x={x1} y={0} width={x2-x1} height={SVG_H} fill={EPOCH_BG[i%2]} />;
-          })}
-
-          {/* Gastric active zone */}
-          {gastricBands.map((b, i) => {
-            const x1 = Math.max(0, px(b.feedMs));
-            const x2 = Math.min(SCROLL_W, px(Math.min(b.gastricEndMs, b.epochEndMs)));
-            if (x2 <= x1) return null;
-            return <Rect key={`ga-${i}`} x={x1} y={0} width={x2-x1} height={SVG_H} fill={GASTRIC_BG[i%2]} />;
-          })}
-
-          {/* Hour ticks */}
-          {hourTicks.map((tick, i) => {
-            if (!tick.isHour && !showHalfTicks) return null;
-            const x = px(tick.ms);
-            if (x < 0 || x > SCROLL_W) return null;
-            return (
-              <G key={`ht-${i}`}>
-                <Line
-                  x1={x} y1={HOUR_TICK_Y}
-                  x2={x} y2={tick.isHour ? HOUR_TICK_Y + 9 : HOUR_TICK_Y + 5}
-                  stroke={tick.isHour ? '#334155' : '#293548'}
-                  strokeWidth={tick.isHour ? 1.5 : 1}
-                />
-                {tick.isHour && showHourLabels && (
-                  <SvgText x={x} y={HOUR_LABEL_Y}
-                    textAnchor="middle" fontSize={FS_HOUR}
-                    fill="#475569" fontFamily="monospace">
-                    {fmtHour(tick.ms, timeFormat)}
-                  </SvgText>
-                )}
-              </G>
-            );
-          })}
-
-          {/* Main track line */}
-          <Line x1={0} y1={TRACK_Y} x2={SCROLL_W} y2={TRACK_Y} stroke="#334155" strokeWidth={1.5} />
-
-          {/* "Now" dashed reference */}
-          <G>
-            <Line x1={nowX} y1={0} x2={nowX} y2={SVG_H}
-              stroke="#475569" strokeWidth={1} strokeDasharray="3,3" opacity={0.28} />
-            <SvgText x={nowX} y={12}
-              textAnchor="middle" fontSize={9} fill="#475569" fontFamily="monospace">
-              now
-            </SvgText>
-          </G>
-
-          {/* Feed markers */}
-          {allMarkers.map((m, i) => {
-            const isLift = lifted[i];
-            const isDrop = timeDrop[i];
-            const labelY = isLift ? LABEL_LIFT_Y : LABEL_BASE_Y;
-            const headerY = labelY - 16;
-            const timeY = isDrop ? TIME_DROP_Y : TIME_BASE_Y;
-            const nHW = approxW(m.numStr, FS_LABEL) / 2;
-
-            return (
-              <G key={`m-${i}`}>
-                {isLift && (
-                  <Line x1={m.x} y1={labelY+4} x2={m.x} y2={TRACK_Y-10}
-                    stroke={m.dotColor} strokeWidth={1} strokeDasharray="3,2" opacity={0.55} />
-                )}
-                {isDrop && (
-                  <Line x1={m.x} y1={TRACK_Y+8} x2={m.x} y2={timeY-4}
-                    stroke={m.dotColor} strokeWidth={1} strokeDasharray="3,2" opacity={0.45} />
-                )}
-                {!isLift && (
-                  <Line x1={m.x} y1={TRACK_Y-8} x2={m.x} y2={TRACK_Y+8}
-                    stroke={m.dotColor} strokeWidth={1.5} />
-                )}
-                <Circle cx={m.x} cy={TRACK_Y} r={6}
-                  fill={m.fillDot ? m.dotColor : '#1e293b'}
-                  stroke={m.dotColor} strokeWidth={2.5} />
-                {!!m.header && (
-                  <SvgText x={m.x} y={headerY} textAnchor="middle"
-                    fontSize={FS_HEADER} fill="#64748b" fontFamily="system-ui,sans-serif">
-                    {m.header}
-                  </SvgText>
-                )}
-                <SvgText x={m.x} y={labelY} textAnchor="middle"
-                  fontSize={FS_LABEL} fontWeight="bold"
-                  fill={m.labelColor} fontFamily="monospace">
-                  {m.numStr}
-                </SvgText>
-                {m.showBottle && (
-                  <SvgText x={m.x + nHW + 2} y={labelY}
-                    textAnchor="start" fontSize={FS_LABEL} fill={m.labelColor}>
-                    🍼
-                  </SvgText>
-                )}
-                <SvgText x={m.x} y={timeY} textAnchor="middle"
-                  fontSize={FS_TIME} fontWeight="600"
-                  fill={m.labelColor} fontFamily="monospace">
-                  {m.time}
-                </SvgText>
-              </G>
-            );
-          })}
-        </Svg>
+    <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }]}>
+      <Text style={[styles.cardLabel, { marginBottom: 8 }]}>FEEDING TIMELINE</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: 'center', paddingHorizontal: 4 }}>
+        {markers.map((m, i) => (
+          <React.Fragment key={i}>
+            {i > 0 && (
+              <View style={{ width: 24, height: 1, backgroundColor: '#334155', alignSelf: 'center', marginTop: 10 }} />
+            )}
+            <View style={{ alignItems: 'center', paddingHorizontal: 6, minWidth: 56 }}>
+              {m.header ? (
+                <Text style={{ fontSize: 9, color: '#64748b', marginBottom: 2 }}>{m.header}</Text>
+              ) : (
+                <View style={{ height: 13 }} />
+              )}
+              <Text style={{ fontSize: 13, fontWeight: '700', color: m.dotColor, fontFamily: 'monospace', marginBottom: 4 }}>{m.label}</Text>
+              <View style={{
+                width: 10, height: 10, borderRadius: 5,
+                backgroundColor: m.fillDot ? m.dotColor : 'transparent',
+                borderWidth: 2, borderColor: m.dotColor,
+                marginBottom: 4,
+              }} />
+              <Text style={{ fontSize: 11, color: m.dotColor, fontFamily: 'monospace' }}>{m.time}</Text>
+            </View>
+          </React.Fragment>
+        ))}
       </ScrollView>
-      </View>
-
-      {allFuture && (() => {
-        const currentSmoothed = smoothedAtTime(feeds, hourlyRate, now);
-        const isStomachLimited = currentSmoothed < dailyTargetMl;
-        return (
-          <Text style={[styles.timelineNote, { color: isStomachLimited ? C.textSecondary : C.orange }]}>
-            {isStomachLimited
-              ? `Stomach full — next feed at ${progression.length > 0 ? fmtTimeStr(progression[0].readyAtMs, timeFormat) : '?'}`
-              : 'Well fed — all sizes available later'}
-          </Text>
-        );
-      })()}
     </View>
   );
 }
@@ -626,10 +401,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   );
   const smoothedPct = (smoothedMl / derived.dailyTargetMl) * 100;
 
-  const predictors: PredictorResult | null = computePredictors(
-    feeds, derived.hourlyRate, derived.dailyTargetMl, settings.preferredBottleWaterMl
-  );
-
   // Stomach at live now (for StatusCard right column)
   const capMilkVal = stomachCapMilk(settings.preferredBottleWaterMl, derived.hourlyRate);
   const loadNow = stomachLoad(feeds, now);
@@ -672,17 +443,14 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       />
 
       {/* 2. Feeding Timeline */}
-      {predictors && (
-        <FeedingTimeline
-          feeds={feeds}
-          predictors={predictors}
-          preferredBottleWaterMl={settings.preferredBottleWaterMl}
-          now={now}
-          hourlyRate={derived.hourlyRate}
-          dailyTargetMl={derived.dailyTargetMl}
-          timeFormat={tf}
-        />
-      )}
+      <FeedingTimeline
+        feeds={feeds}
+        preferredBottleWaterMl={settings.preferredBottleWaterMl}
+        now={now}
+        hourlyRate={derived.hourlyRate}
+        dailyTargetMl={derived.dailyTargetMl}
+        timeFormat={tf}
+      />
 
       {/* 3. Next Feed card — shows when preferred bottle size is next available */}
       <View style={[styles.card, { marginBottom: 12 }]}>
