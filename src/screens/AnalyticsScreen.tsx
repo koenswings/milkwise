@@ -429,20 +429,31 @@ export default function AnalyticsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Custom bar chart */}
+      {/* SVG line chart – daily totals */}
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>Daily Totals (ml)</Text>
 
         {(() => {
-          const CHART_H = 160;
-          const CHART_W = screenWidth - 64; // card padding 16*2 = 32, content padding 16*2 = 32
+          const SVG_W = screenWidth - 64;
+          const SVG_H = 200;
+          const PAD_L = 36;
+          const PAD_R = 16;
+          const PAD_T = 20;
+          const PAD_B = 32;
+          const plotW = SVG_W - PAD_L - PAD_R;
+          const plotH = SVG_H - PAD_T - PAD_B;
           const n = totals.length;
-          const BAR_W = Math.floor((CHART_W - (n - 1) * 2) / n);
           const maxVal = Math.max(derived.dailyTargetMl * 1.2, ...totals.map(t => t.totalMl), 1);
 
-          function barColor(t: typeof totals[0]): string {
-            if (t.date === todayStr) return '#64748b';
-            if (t.totalMl === 0) return '#334155';
+          function tx(i: number) {
+            return n <= 1 ? PAD_L + plotW / 2 : PAD_L + (i / (n - 1)) * plotW;
+          }
+          function ty(ml: number) {
+            return PAD_T + (1 - ml / maxVal) * plotH;
+          }
+
+          function dotColor(t: typeof totals[0]): string {
+            if (t.date === todayStr || t.totalMl === 0) return '#64748b';
             const pct = (t.totalMl / t.targetMl) * 100;
             const diff = Math.abs(pct - 100);
             if (diff <= settings.yellowThresholdPct) return COLORS.green;
@@ -450,57 +461,108 @@ export default function AnalyticsScreen() {
             return COLORS.red;
           }
 
-          return (
-            <View style={{ width: CHART_W, alignSelf: 'center' }}>
-              {/* Chart area with relative positioning for target line */}
-              <View style={{ width: CHART_W, height: CHART_H, position: 'relative' }}>
-                {/* Bars row */}
-                <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: CHART_H, flexDirection: 'row', alignItems: 'flex-end' }}>
-                  {totals.map((t, i) => {
-                    const barH = t.totalMl > 0 ? Math.max(3, (t.totalMl / maxVal) * CHART_H) : 3;
-                    const isSelected = tappedDay?.date === t.date;
-                    return (
-                      <React.Fragment key={t.date}>
-                        {i > 0 && <View style={{ width: 2 }} />}
-                        <TouchableOpacity
-                          style={{ width: BAR_W, height: CHART_H, justifyContent: 'flex-end' }}
-                          onPress={() => setTappedDay(
-                            isSelected ? null : { date: t.date, totalMl: t.totalMl, targetMl: t.targetMl }
-                          )}
-                          activeOpacity={0.75}
-                        >
-                          <View style={{
-                            width: BAR_W,
-                            height: barH,
-                            backgroundColor: barColor(t),
-                            borderRadius: 3,
-                            opacity: isSelected ? 0.7 : 1,
-                            borderWidth: isSelected ? 1 : 0,
-                            borderColor: '#fff',
-                          }} />
-                        </TouchableOpacity>
-                      </React.Fragment>
-                    );
-                  })}
-                </View>
+          // Y-axis grid: 3-4 round values
+          const gridValues: number[] = [];
+          const rawStep = maxVal / 4;
+          const gridStep = Math.max(50, Math.round(rawStep / 50) * 50);
+          for (let v = gridStep; v < maxVal; v += gridStep) {
+            gridValues.push(Math.round(v));
+          }
 
-              </View>
-              {/* X labels */}
-              <View style={{ width: CHART_W, flexDirection: 'row', marginTop: 4 }}>
+          // Catmull-Rom smooth curve
+          let curvePath = '';
+          if (n >= 2) {
+            curvePath = `M ${tx(0).toFixed(1)} ${ty(totals[0].totalMl).toFixed(1)}`;
+            for (let i = 0; i < n - 1; i++) {
+              const p0ml = totals[Math.max(0, i - 1)].totalMl;
+              const p1ml = totals[i].totalMl;
+              const p2ml = totals[i + 1].totalMl;
+              const p3ml = totals[Math.min(n - 1, i + 2)].totalMl;
+              const cp1x = tx(i) + (tx(i + 1) - tx(Math.max(0, i - 1))) / 6;
+              const cp1y = ty(p1ml) + (ty(p2ml) - ty(p0ml)) / 6;
+              const cp2x = tx(i + 1) - (tx(Math.min(n - 1, i + 2)) - tx(i)) / 6;
+              const cp2y = ty(p2ml) - (ty(p3ml) - ty(p1ml)) / 6;
+              curvePath += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${tx(i + 1).toFixed(1)} ${ty(p2ml).toFixed(1)}`;
+            }
+          }
+
+          const targetY = ty(derived.dailyTargetMl);
+
+          return (
+            <View style={{ alignSelf: 'center' }}>
+              <Svg width={SVG_W} height={SVG_H}>
+                {/* Background */}
+                <Rect x={0} y={0} width={SVG_W} height={SVG_H} fill="#1e293b" rx={8} />
+
+                {/* Y-axis grid lines */}
+                {gridValues.map(v => (
+                  <React.Fragment key={`grid-${v}`}>
+                    <Line
+                      x1={PAD_L} y1={ty(v)} x2={PAD_L + plotW} y2={ty(v)}
+                      stroke="#ffffff" strokeOpacity={0.06} strokeWidth={1}
+                    />
+                    <SvgText
+                      x={PAD_L - 4} y={ty(v) + 3}
+                      fill="#475569" fontSize={9} textAnchor="end">
+                      {String(v)}
+                    </SvgText>
+                  </React.Fragment>
+                ))}
+
+                {/* Target line (dashed) */}
+                <Line
+                  x1={PAD_L} y1={targetY} x2={PAD_L + plotW} y2={targetY}
+                  stroke="#4ade80" strokeOpacity={0.4} strokeWidth={1.5} strokeDasharray="4 4"
+                />
+                <SvgText x={PAD_L - 4} y={targetY + 3} fill="#4ade80" fontSize={8} textAnchor="end">
+                  tgt
+                </SvgText>
+
+                {/* Smooth Catmull-Rom curve */}
+                {n >= 2 && (
+                  <Path d={curvePath} stroke="#38bdf8" strokeWidth={2.5} fill="none" strokeLinejoin="round" />
+                )}
+
+                {/* Dots */}
+                {totals.map((t, i) => {
+                  const cx = tx(i);
+                  const cy = ty(t.totalMl);
+                  const color = dotColor(t);
+                  const isSelected = tappedDay?.date === t.date;
+                  return (
+                    <Circle
+                      key={`dot-${t.date}`}
+                      cx={cx} cy={cy} r={4}
+                      fill={isSelected ? color : '#1e293b'}
+                      stroke={color}
+                      strokeWidth={2}
+                      onPress={() => setTappedDay(
+                        isSelected ? null : { date: t.date, totalMl: t.totalMl, targetMl: t.targetMl }
+                      )}
+                    />
+                  );
+                })}
+
+                {/* X-axis labels */}
                 {totals.map((t, i) => {
                   const label = period === 7
                     ? ['Su','Mo','Tu','We','Th','Fr','Sa'][new Date(t.date).getDay()]
                     : (i % 5 === 0 ? t.date.slice(5) : '');
+                  if (!label) return null;
                   return (
-                    <React.Fragment key={t.date}>
-                      {i > 0 && <View style={{ width: 2 }} />}
-                      <Text style={{ width: BAR_W, fontSize: 9, color: COLORS.textMuted, textAlign: 'center' }} numberOfLines={1}>
-                        {label}
-                      </Text>
-                    </React.Fragment>
+                    <SvgText
+                      key={`xl-${t.date}`}
+                      x={tx(i)} y={SVG_H - PAD_B + 14}
+                      fill="#475569" fontSize={9} textAnchor="middle">
+                      {label}
+                    </SvgText>
                   );
                 })}
-              </View>
+
+                {/* Axes */}
+                <Line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T + plotH} stroke="#334155" strokeWidth={1.5} />
+                <Line x1={PAD_L} y1={PAD_T + plotH} x2={PAD_L + plotW} y2={PAD_T + plotH} stroke="#334155" strokeWidth={1.5} />
+              </Svg>
             </View>
           );
         })()}
