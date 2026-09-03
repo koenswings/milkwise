@@ -8,6 +8,7 @@ import {
   Modal,
   Dimensions,
 } from 'react-native';
+import Svg, { Line, Circle, Text as SvgText, Path, G, Rect } from 'react-native-svg';
 import { useFocusEffect } from '@react-navigation/native';
 import { getFeeds, getSettings, getWeights } from '../lib/store';
 import {
@@ -17,6 +18,7 @@ import {
   consistencyScore,
   periodTotal,
 } from '../lib/calculations';
+import { whoReferenceCurves } from '../lib/whoGrowth';
 import { Feed, Settings, WeightEntry } from '../types';
 
 const COLORS = {
@@ -41,6 +43,227 @@ function consistencyColor(score: number | null): string {
   if (score < 1.5) return COLORS.yellow;
   return COLORS.red;
 }
+
+// ─── WeightChart ─────────────────────────────────────────────────────────────
+
+interface WeightChartProps {
+  weights: WeightEntry[];
+  dateOfBirthMs?: number;
+  sex?: 'M' | 'F';
+}
+
+function WeightChart({ weights, dateOfBirthMs, sex }: WeightChartProps) {
+  if (weights.length === 0) {
+    return (
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>⚖️ Weight over time</Text>
+        <Text style={[styles.periodLabel, { textAlign: 'center', paddingVertical: 24 }]}>
+          No weight entries yet. Use the ⚖️ button on the dashboard.
+        </Text>
+      </View>
+    );
+  }
+
+  const showWho = !!(dateOfBirthMs && sex);
+
+  const SVG_W = screenWidth - 64; // outer padding 16*2 + card padding 16*2
+  const SVG_H = 300;
+  const PAD_L = 42;
+  const PAD_R = showWho ? 36 : 16;
+  const PAD_T = 20;
+  const PAD_B = 32;
+  const plotW = SVG_W - PAD_L - PAD_R;
+  const plotH = SVG_H - PAD_T - PAD_B;
+
+  const sorted = [...weights].sort((a, b) => a.timestamp - b.timestamp);
+
+  let T_START: number;
+  let T_END: number;
+  if (showWho && dateOfBirthMs) {
+    T_START = dateOfBirthMs;
+    T_END = Date.now() + 30 * 86_400_000;
+  } else {
+    T_START = sorted[0].timestamp;
+    T_END = sorted[sorted.length - 1].timestamp + 86_400_000;
+  }
+
+  let wMin = Math.min(...sorted.map(w => w.weightKg)) - 0.1;
+  let wMax = Math.max(...sorted.map(w => w.weightKg)) + 0.1;
+
+  // Expand y range to include WHO reference curves
+  if (showWho && dateOfBirthMs && sex) {
+    const ageMonthsNow = (Date.now() - dateOfBirthMs) / (365.25 / 12 * 86_400_000);
+    const maxMonths = Math.min(24, Math.ceil(ageMonthsNow) + 1);
+    const curves = whoReferenceCurves(sex, 0, maxMonths);
+    for (const curve of curves) {
+      for (const pt of curve.points) {
+        wMin = Math.min(wMin, pt.weightKg - 0.1);
+        wMax = Math.max(wMax, pt.weightKg + 0.1);
+      }
+    }
+  }
+
+  const tx = (t: number) => PAD_L + ((t - T_START) / (T_END - T_START)) * plotW;
+  const ty = (wKg: number) => PAD_T + (1 - (wKg - wMin) / (wMax - wMin)) * plotH;
+
+  // Adaptive grid step
+  const yRange = wMax - wMin;
+  const gridStep = yRange <= 1.5 ? 0.2 : yRange <= 4 ? 0.5 : 1;
+  const wGridStart = Math.ceil(wMin / gridStep) * gridStep;
+
+  // ── Grid lines + Y labels ──
+  const gridElements: React.ReactNode[] = [];
+  for (let i = 0; ; i++) {
+    const ww = wGridStart + i * gridStep;
+    if (ww > wMax + gridStep * 0.01) break;
+    const y = ty(ww);
+    gridElements.push(
+      <Line key={`g${i}`}
+        x1={PAD_L} y1={y} x2={PAD_L + plotW} y2={y}
+        stroke="#ffffff15" strokeWidth={1} strokeDasharray="3 3" />
+    );
+    gridElements.push(
+      <SvgText key={`yl${i}`}
+        x={PAD_L - 4} y={y + 3}
+        fill="#475569" fontSize={9} textAnchor="end">
+        {ww.toFixed(gridStep < 1 ? 1 : 0)}
+      </SvgText>
+    );
+  }
+
+  // ── X-axis labels ──
+  const xElements: React.ReactNode[] = [];
+  if (showWho && dateOfBirthMs) {
+    const ageMonthsEnd = Math.min(24, (T_END - dateOfBirthMs) / (365.25 / 12 * 86_400_000));
+    const step = ageMonthsEnd > 12 ? 3 : 1;
+    for (let m = 0; m <= Math.ceil(ageMonthsEnd); m += step) {
+      const t = dateOfBirthMs + m * (365.25 / 12 * 86_400_000);
+      const x = tx(t);
+      if (x < PAD_L || x > PAD_L + plotW) continue;
+      xElements.push(
+        <Line key={`xg${m}`} x1={x} y1={PAD_T} x2={x} y2={PAD_T + plotH}
+          stroke="#ffffff10" strokeWidth={1} />
+      );
+      xElements.push(
+        <SvgText key={`xl${m}`} x={x} y={PAD_T + plotH + 14}
+          fill="#475569" fontSize={9} textAnchor="middle">
+          {`${m}m`}
+        </SvgText>
+      );
+    }
+  } else {
+    const tRange = T_END - T_START;
+    const tickMs = tRange > 30 * 86_400_000 ? 7 * 86_400_000 : 86_400_000;
+    for (let t = Math.ceil(T_START / tickMs) * tickMs; t <= T_END; t += tickMs) {
+      const x = tx(t);
+      if (x < PAD_L || x > PAD_L + plotW) continue;
+      const d = new Date(t);
+      const label = `${d.getMonth() + 1}/${d.getDate()}`;
+      xElements.push(
+        <Line key={`xg${t}`} x1={x} y1={PAD_T} x2={x} y2={PAD_T + plotH}
+          stroke="#ffffff10" strokeWidth={1} />
+      );
+      xElements.push(
+        <SvgText key={`xl${t}`} x={x} y={PAD_T + plotH + 14}
+          fill="#475569" fontSize={9} textAnchor="middle">
+          {label}
+        </SvgText>
+      );
+    }
+  }
+
+  // ── WHO reference curves ──
+  const whoElements: React.ReactNode[] = [];
+  if (showWho && dateOfBirthMs && sex) {
+    const ageMonthsNow = (Date.now() - dateOfBirthMs) / (365.25 / 12 * 86_400_000);
+    const maxMonths = Math.min(24, Math.ceil(ageMonthsNow) + 1);
+    const curves = whoReferenceCurves(sex, 0, maxMonths);
+    const msPerMonth = 365.25 / 12 * 86_400_000;
+    const zColors: Record<string, string> = {
+      '-2': '#ef4444', '-1': '#fb923c', '0': '#94a3b8', '1': '#fb923c', '2': '#ef4444',
+    };
+    const zLabels: Record<string, string> = {
+      '-2': 'Z-2', '-1': 'Z-1', '0': 'Z0', '1': 'Z+1', '2': 'Z+2',
+    };
+    for (const curve of curves) {
+      const key = String(curve.z);
+      const color = zColors[key] ?? '#666';
+      const pts = curve.points.map(pt => ({
+        x: tx(dateOfBirthMs + pt.ageMonths * msPerMonth),
+        y: ty(pt.weightKg),
+      }));
+      const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+      whoElements.push(
+        <Path key={`who-${key}`} d={d} stroke={color} strokeWidth={1}
+          strokeDasharray="4 4" fill="none" />
+      );
+      const last = pts[pts.length - 1];
+      whoElements.push(
+        <SvgText key={`who-lbl-${key}`}
+          x={last.x + 2} y={last.y + 3}
+          fill={color} fontSize={8} textAnchor="start">
+          {zLabels[key] ?? `Z${curve.z}`}
+        </SvgText>
+      );
+    }
+  }
+
+  // ── Catmull-Rom smooth curve ──
+  let catmullPath: React.ReactNode = null;
+  const n = sorted.length;
+  if (n >= 2) {
+    let d = `M ${tx(sorted[0].timestamp).toFixed(1)} ${ty(sorted[0].weightKg).toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = sorted[Math.max(0, i - 1)];
+      const p1 = sorted[i];
+      const p2 = sorted[i + 1];
+      const p3 = sorted[Math.min(n - 1, i + 2)];
+      const cp1x = tx(p1.timestamp) + (tx(p2.timestamp) - tx(p0.timestamp)) / 6;
+      const cp1y = ty(p1.weightKg) + (ty(p2.weightKg) - ty(p0.weightKg)) / 6;
+      const cp2x = tx(p2.timestamp) - (tx(p3.timestamp) - tx(p1.timestamp)) / 6;
+      const cp2y = ty(p2.weightKg) - (ty(p3.weightKg) - ty(p1.weightKg)) / 6;
+      d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)} ${cp2x.toFixed(1)} ${cp2y.toFixed(1)} ${tx(p2.timestamp).toFixed(1)} ${ty(p2.weightKg).toFixed(1)}`;
+    }
+    catmullPath = (
+      <Path d={d} stroke="#34d399" strokeWidth={2.5} fill="none" strokeLinejoin="round" />
+    );
+  }
+
+  // ── Dots + labels ──
+  const dots = sorted.map((w, i) => {
+    const x = tx(w.timestamp);
+    const y = ty(w.weightKg);
+    return (
+      <G key={`dot-${i}`}>
+        <Circle cx={x} cy={y} r={4} fill="#34d399" />
+        <SvgText x={x} y={y - 8} fill="#e2e8f0" fontSize={10} fontWeight="bold" textAnchor="middle">
+          {`${w.weightKg} kg`}
+        </SvgText>
+      </G>
+    );
+  });
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>⚖️ Weight over time</Text>
+      <Svg width={SVG_W} height={SVG_H}>
+        <Rect x={0} y={0} width={SVG_W} height={SVG_H} fill="#1e293b" rx={8} />
+        {gridElements}
+        {xElements}
+        {whoElements}
+        {catmullPath}
+        {dots}
+        {/* Axes */}
+        <Line x1={PAD_L} y1={PAD_T} x2={PAD_L} y2={PAD_T + plotH}
+          stroke="#334155" strokeWidth={1.5} />
+        <Line x1={PAD_L} y1={PAD_T + plotH} x2={PAD_L + plotW} y2={PAD_T + plotH}
+          stroke="#334155" strokeWidth={1.5} />
+      </Svg>
+    </View>
+  );
+}
+
+// ─── ConsistencyExplainerModal ────────────────────────────────────────────────
 
 interface ConsistencyExplainerProps {
   visible: boolean;
@@ -357,6 +580,13 @@ export default function AnalyticsScreen() {
           </View>
         ))}
       </View>
+
+      {/* Weight Chart */}
+      <WeightChart
+        weights={weights}
+        dateOfBirthMs={settings.dateOfBirthMs}
+        sex={settings.sex}
+      />
 
       {/* Weight History */}
       {weights.length > 0 && (
