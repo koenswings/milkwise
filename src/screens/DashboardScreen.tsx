@@ -18,10 +18,12 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  Alert,
 } from 'react-native';
+import Constants from 'expo-constants';
 import { useFocusEffect } from '@react-navigation/native';
 import Svg, { Line, Circle, Rect, G, Text as SvgText, Polygon } from 'react-native-svg';
-import { getFeeds, getSettings, getWeights } from '../lib/store';
+import { getFeeds, getSettings, getWeights, saveSettings } from '../lib/store';
 import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
   deriveSettings,
@@ -41,7 +43,7 @@ import {
 } from '../lib/calculations';
 import { Feed, Settings, WeightEntry, PredictorResult } from '../types';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = Constants.expoConfig?.version ?? '1.1';
 
 const C = {
   bg:            '#0f172a',
@@ -396,6 +398,16 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
 
   const nowX = px(now);
 
+  if (!lastFeed && progression.length === 0) {
+    return (
+      <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }]}>
+        <View style={styles.timelineStrip} />
+        <Text style={styles.cardLabel}>FEEDING TIMELINE</Text>
+        <Text style={[styles.cardSub, { marginTop: 8 }]}>No feeds yet</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12, minHeight: 160 }]}>
       {/* Gradient top strip via View */}
@@ -406,8 +418,9 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
         <View style={styles.questionCircle}><Text style={styles.questionCircleText}>?</Text></View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled style={{ marginTop: 4 }}>
-        <Svg width={SCROLL_W} height={SVG_H}>
+      <View style={{ height: 160 }}>
+      <ScrollView horizontal={true} scrollEnabled={true} showsHorizontalScrollIndicator={false} nestedScrollEnabled style={{ marginTop: 4 }}>
+        <Svg width={SCROLL_W} height={SVG_H} viewBox={`0 0 ${SCROLL_W} ${SVG_H}`}>
           {/* Epoch bands */}
           {gastricBands.map((b, i) => {
             const x1 = Math.max(0, px(b.feedMs));
@@ -514,6 +527,7 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
           })}
         </Svg>
       </ScrollView>
+      </View>
 
       {allFuture && (() => {
         const currentSmoothed = smoothedAtTime(feeds, hourlyRate, now);
@@ -563,7 +577,16 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     }, [load])
   );
 
-  const derived = deriveSettings(settings);
+  // Issue 6: Effective weight from most recent weight entry (≤7 days old)
+  const SEVEN_DAYS_MS = 7 * 24 * 3_600_000;
+  const sortedWeights = [...weights].sort((a, b) => b.timestamp - a.timestamp);
+  const latestWeight = sortedWeights[0];
+  const effectiveWeightKg =
+    latestWeight && (now - latestWeight.timestamp) <= SEVEN_DAYS_MS
+      ? latestWeight.weightKg
+      : settings.weightKg;
+
+  const derived = deriveSettings({ ...settings, weightKg: effectiveWeightKg });
 
   const lastFeed = feeds.length > 0
     ? feeds.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
@@ -635,28 +658,44 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         />
       )}
 
-      {/* 3. Next Feed card (Predictor A) */}
+      {/* 3. Next Feed card (advised from canTakeProgression) */}
       <View style={[styles.card, { marginBottom: 12 }]}>
         <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
-        {predictors ? (
-          <>
-            <Text style={styles.cardValue}>
-              {fmtTimeStr(predictors.predictorATimestamp, tf)}
-            </Text>
-            <Text style={styles.cardSub}>{formatRelative(predictors.predictorATimestamp, now)}</Text>
-            {predictors.predictorAVolumeWater > 0 ? (
-              <Text style={styles.cardMuted}>
-                {predictors.predictorAVolumeWater} ml water · {Math.round(predictors.predictorAVolumeMilk)} ml milk
-                {predictors.predictorACapped ? ' (capped)' : ''}
-                {predictors.predictorASurplus ? ' (surplus)' : ''}
-              </Text>
-            ) : (
-              <Text style={[styles.cardMuted, { color: C.orange }]}>Surplus — skip or offer smallest</Text>
-            )}
-          </>
-        ) : (
-          <Text style={styles.cardSub}>No feeds yet</Text>
-        )}
+        {(() => {
+          const prog = canTakeProgression(feeds, settings.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
+          const advised = prog.find(e => e.isAdvised);
+          const fitsNowList = prog.filter(e => e.fitsNow);
+          const nextFuture = prog.filter(e => !e.fitsNow).sort((a, b) => a.readyAtMs - b.readyAtMs)[0];
+
+          if (advised) {
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.green }]}>{fmtTimeStr(now, tf)}</Text>
+                <Text style={[styles.cardSub, { color: C.green }]}>now</Text>
+                <Text style={styles.cardMuted}>{advised.waterMl} ml water 🍼</Text>
+              </>
+            );
+          } else if (fitsNowList.length > 0) {
+            const entry = fitsNowList[fitsNowList.length - 1];
+            return (
+              <>
+                <Text style={styles.cardValue}>{fmtTimeStr(now, tf)}</Text>
+                <Text style={styles.cardSub}>now</Text>
+                <Text style={styles.cardMuted}>{entry.waterMl} ml water 🍼</Text>
+              </>
+            );
+          } else if (nextFuture) {
+            return (
+              <>
+                <Text style={styles.cardValue}>{fmtTimeStr(nextFuture.readyAtMs, tf)}</Text>
+                <Text style={styles.cardSub}>{formatRelative(nextFuture.readyAtMs, now)}</Text>
+                <Text style={styles.cardMuted}>{nextFuture.waterMl} ml water 🍼</Text>
+              </>
+            );
+          } else {
+            return <Text style={styles.cardSub}>No feeds yet</Text>;
+          }
+        })()}
       </View>
 
       {/* 4. Daily Target card */}
@@ -674,7 +713,45 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             })()}
           </Text>
         </View>
-        <Text style={styles.cardMuted}>{settings.weightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
+        {/* Weight quick-edit row */}
+        <TouchableOpacity
+          onPress={() => Alert.prompt(
+            'Update weight',
+            'Enter new weight in kg:',
+            (val) => {
+              const kg = parseFloat(val);
+              if (!isNaN(kg) && kg > 0) {
+                saveSettings({ ...settings, weightKg: kg }).then(load);
+              }
+            },
+            'plain-text',
+            String(effectiveWeightKg),
+          )}
+          style={styles.editRow}
+        >
+          <Text style={styles.editRowText}>⚖️ {effectiveWeightKg} kg</Text>
+          <Text style={styles.editIcon}>✏️</Text>
+        </TouchableOpacity>
+        {/* Preferred bottle quick-edit row */}
+        <TouchableOpacity
+          onPress={() => Alert.prompt(
+            'Update preferred bottle',
+            'Enter preferred bottle water ml:',
+            (val) => {
+              const ml = parseInt(val, 10);
+              if (!isNaN(ml) && ml > 0) {
+                saveSettings({ ...settings, preferredBottleWaterMl: ml }).then(load);
+              }
+            },
+            'plain-text',
+            String(settings.preferredBottleWaterMl),
+          )}
+          style={styles.editRow}
+        >
+          <Text style={styles.editRowText}>{settings.preferredBottleWaterMl} ml 🍼 preferred</Text>
+          <Text style={styles.editIcon}>✏️</Text>
+        </TouchableOpacity>
+        <Text style={styles.cardMuted}>{effectiveWeightKg} kg × {settings.mlPerKgPerDay} ml/kg/day</Text>
         <Text style={styles.cardMuted}>
           Thresholds: ±{y}% yellow · ±{r}% red
         </Text>
@@ -701,14 +778,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         <TouchableOpacity style={styles.logButton} onPress={() => navigation.navigate('Log')}>
           <Text style={styles.logButtonText}>➕ Log Feed</Text>
         </TouchableOpacity>
-        <View style={styles.secondaryButtons}>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => navigation.navigate('History')}>
-            <Text style={styles.secondaryBtnText}>📋 History</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => navigation.navigate('Analytics')}>
-            <Text style={styles.secondaryBtnText}>📊 Analytics</Text>
-          </TouchableOpacity>
-        </View>
       </View>
     </ScrollView>
   );
@@ -731,9 +800,9 @@ const styles = StyleSheet.create({
   actionRow:        { marginBottom: 8 },
   logButton:        { backgroundColor: C.blue, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 10 },
   logButtonText:    { color: '#fff', fontSize: 16, fontWeight: '600' },
-  secondaryButtons: { flexDirection: 'row', gap: 10 },
-  secondaryBtn:     { flex: 1, backgroundColor: C.card, borderRadius: 12, paddingVertical: 11, alignItems: 'center', borderWidth: 1, borderColor: C.cardBorder },
-  secondaryBtnText: { color: C.textSecondary, fontSize: 14, fontWeight: '600' },
+  editRow:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#334155', marginTop: 4 },
+  editRowText:      { fontSize: 14, color: C.textSecondary },
+  editIcon:         { fontSize: 14 },
 
   card:        { backgroundColor: C.card, borderRadius: 12, padding: 14, borderColor: C.cardBorder, borderWidth: 1 },
   cardLabel:   { fontSize: 11, color: C.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.6 },
