@@ -397,7 +397,7 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
   const nowX = px(now);
 
   return (
-    <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }]}>
+    <View style={[styles.card, { borderColor: 'rgba(244,63,94,0.25)', borderWidth: 1, marginBottom: 12, padding: 12, minHeight: 160 }]}>
       {/* Gradient top strip via View */}
       <View style={styles.timelineStrip} />
 
@@ -406,7 +406,7 @@ function FeedingTimeline({ feeds, predictors, preferredBottleWaterMl, now, hourl
         <View style={styles.questionCircle}><Text style={styles.questionCircleText}>?</Text></View>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled style={{ marginTop: 4 }}>
         <Svg width={SCROLL_W} height={SVG_H}>
           {/* Epoch bands */}
           {gastricBands.map((b, i) => {
@@ -610,11 +610,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         {settings.weightKg} kg · Target {Math.round(derived.dailyTargetMl)} ml/day
       </Text>
 
-      {/* Log Feed button */}
-      <TouchableOpacity style={styles.logButton} onPress={() => navigation.navigate('Log')}>
-        <Text style={styles.logButtonText}>➕ Log Feed</Text>
-      </TouchableOpacity>
-
       {/* 1. Status Card */}
       <StatusCard
         smoothedMl={smoothedMl}
@@ -700,6 +695,21 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           ))
         )}
       </View>
+
+      {/* 6. Action buttons */}
+      <View style={styles.actionRow}>
+        <TouchableOpacity style={styles.logButton} onPress={() => navigation.navigate('Log')}>
+          <Text style={styles.logButtonText}>➕ Log Feed</Text>
+        </TouchableOpacity>
+        <View style={styles.secondaryButtons}>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={() => navigation.navigate('History')}>
+            <Text style={styles.secondaryBtnText}>📋 History</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryBtn} onPress={() => navigation.navigate('Analytics')}>
+            <Text style={styles.secondaryBtnText}>📊 Analytics</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </ScrollView>
   );
 }
@@ -718,8 +728,12 @@ const styles = StyleSheet.create({
   gearText:    { fontSize: 20 },
   subtitle:    { fontSize: 13, color: C.textSecondary, marginBottom: 12 },
 
-  logButton:       { backgroundColor: C.blue, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 16 },
-  logButtonText:   { color: '#fff', fontSize: 16, fontWeight: '600' },
+  actionRow:        { marginBottom: 8 },
+  logButton:        { backgroundColor: C.blue, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginBottom: 10 },
+  logButtonText:    { color: '#fff', fontSize: 16, fontWeight: '600' },
+  secondaryButtons: { flexDirection: 'row', gap: 10 },
+  secondaryBtn:     { flex: 1, backgroundColor: C.card, borderRadius: 12, paddingVertical: 11, alignItems: 'center', borderWidth: 1, borderColor: C.cardBorder },
+  secondaryBtnText: { color: C.textSecondary, fontSize: 14, fontWeight: '600' },
 
   card:        { backgroundColor: C.card, borderRadius: 12, padding: 14, borderColor: C.cardBorder, borderWidth: 1 },
   cardLabel:   { fontSize: 11, color: C.textSecondary, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.6 },

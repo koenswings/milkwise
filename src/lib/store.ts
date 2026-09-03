@@ -13,9 +13,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feed, Settings, WeightEntry } from '../types';
 
-// Set in .env for dev; leave unset (or empty) for production builds.
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? '';
-const USE_API = API_URL.length > 0;
+// Fallback to Pi (idea02) Tailscale IP so EAS builds always connect.
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://100.85.108.118:3333';
+const USE_API = true; // always use API — local AsyncStorage is not the primary store
 
 // AsyncStorage keys (production only)
 const FEEDS_KEY = 'bmt_feeds';
