@@ -9,7 +9,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getFeeds, getSettings } from '../lib/store';
+import { getFeeds, getSettings, getWeights } from '../lib/store';
 import {
   deriveSettings,
   dailyTotals,
@@ -17,7 +17,7 @@ import {
   consistencyScore,
   periodTotal,
 } from '../lib/calculations';
-import { Feed, Settings } from '../types';
+import { Feed, Settings, WeightEntry } from '../types';
 
 const COLORS = {
   bg: '#0f172a',
@@ -148,15 +148,16 @@ export default function AnalyticsScreen() {
     redThresholdPct: 10,
     timeFormat: '24h',
   });
+  const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [period, setPeriod] = useState<7 | 30>(7);
   const [showConsistencyExplainer, setShowConsistencyExplainer] = useState(false);
   const [tappedDay, setTappedDay] = useState<{ date: string; totalMl: number; targetMl: number } | null>(null);
 
   const load = useCallback(async () => {
-    const [f, s] = await Promise.all([getFeeds(), getSettings()]);
+    const [f, s, w] = await Promise.all([getFeeds(), getSettings(), getWeights()]);
     setFeeds(f);
     setSettings(s);
-
+    setWeights(w);
   }, []);
 
   useFocusEffect(
@@ -356,6 +357,24 @@ export default function AnalyticsScreen() {
           </View>
         ))}
       </View>
+
+      {/* Weight History */}
+      {weights.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Weight History</Text>
+          {[...weights]
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 10)
+            .map((entry) => (
+              <View key={entry.id} style={styles.periodRow}>
+                <Text style={styles.periodLabel}>
+                  {new Date(entry.timestamp).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                </Text>
+                <Text style={styles.periodValue}>{entry.weightKg.toFixed(2)} kg</Text>
+              </View>
+            ))}
+        </View>
+      )}
 
       <ConsistencyExplainerModal
         visible={showConsistencyExplainer}

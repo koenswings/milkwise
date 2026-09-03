@@ -515,7 +515,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           )}
           style={styles.editRow}
         >
-          <Text style={styles.editRowText}>⚖️ {effectiveWeightKg} kg</Text>
+          <Text style={styles.editRowText}>⚖️ {effectiveWeightKg.toFixed(2)} kg</Text>
           <Text style={styles.editIcon}>✏️</Text>
         </TouchableOpacity>
         {/* Preferred bottle quick-edit row */}
