@@ -1,10 +1,8 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Text } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Ionicons } from '@expo/vector-icons';
-import { useFonts } from 'expo-font';
 
 import DashboardScreen from './src/screens/DashboardScreen';
 import LogScreen from './src/screens/LogScreen';
@@ -37,9 +35,6 @@ const MilkWiseTheme = {
 };
 
 export default function App() {
-  const [fontsLoaded] = useFonts(Ionicons.font);
-  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#0f172a' }} />;
-
   return (
     <NavigationContainer theme={MilkWiseTheme}>
       <StatusBar style="light" />
@@ -63,27 +58,27 @@ export default function App() {
         <Tab.Screen
           name="Dashboard"
           component={DashboardScreen}
-          options={{ title: 'Dashboard', tabBarLabel: 'Home', tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'home' : 'home-outline'} size={24} color={color} /> }}
+          options={{ title: 'Dashboard', tabBarLabel: 'Home', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22 }}>🏠</Text> }}
         />
         <Tab.Screen
           name="Log"
           component={LogScreen}
-          options={{ title: 'Log Feed', tabBarLabel: 'Log', tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'add-circle' : 'add-circle-outline'} size={24} color={color} /> }}
+          options={{ title: 'Log Feed', tabBarLabel: 'Log', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22 }}>🍼</Text> }}
         />
         <Tab.Screen
           name="History"
           component={HistoryScreen}
-          options={{ title: 'History', tabBarLabel: 'History', tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'list' : 'list-outline'} size={24} color={color} /> }}
+          options={{ title: 'History', tabBarLabel: 'History', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22 }}>📋</Text> }}
         />
         <Tab.Screen
           name="Analytics"
           component={AnalyticsScreen}
-          options={{ title: 'Analytics', tabBarLabel: 'Analytics', tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'bar-chart' : 'bar-chart-outline'} size={24} color={color} /> }}
+          options={{ title: 'Analytics', tabBarLabel: 'Analytics', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22 }}>📈</Text> }}
         />
         <Tab.Screen
           name="Settings"
           component={SettingsScreen}
-          options={{ title: 'Settings', tabBarLabel: 'Settings', tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'settings' : 'settings-outline'} size={24} color={color} /> }}
+          options={{ title: 'Settings', tabBarLabel: 'Settings', tabBarIcon: ({ color }) => <Text style={{ fontSize: 22 }}>⚙️</Text> }}
         />
       </Tab.Navigator>
     </NavigationContainer>
