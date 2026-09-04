@@ -381,8 +381,11 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   useFocusEffect(
     useCallback(() => {
       load();
-      // Tick every 60s: only updates 'now' for relative time labels
-      intervalRef.current = setInterval(() => setNow(Date.now()), 60_000);
+      // Tick every 30s: updates 'now' for relative time labels + re-fetches feeds
+      intervalRef.current = setInterval(() => {
+        setNow(Date.now());
+        load(); // re-fetch to pick up any new feeds logged elsewhere
+      }, 30_000);
       return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [load])
   );

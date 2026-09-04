@@ -3,7 +3,7 @@
     "name": "MilkWise",
     "slug": "milkwise",
     "owner": "koenswings",
-    "version": "1.2.3",
+    "version": "1.2.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,10 +16,11 @@
           "NSAllowsArbitraryLoads": true
         }
       },
-      "buildNumber": "17"
+      "buildNumber": "18"
     },
     "android": {
       "package": "com.koenswings.milkwise",
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
