@@ -29,6 +29,7 @@ import {
   deriveSettings,
   strict24hTotal,
   smoothedEffective,
+  smoothedAtTime,
   stomachCapMilk,
   stomachLoad,
   canTakeProgression,
@@ -432,6 +433,17 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       <Text style={styles.subtitle}>
         {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO' : weightSource === 'manual' ? 'measured' : 'settings'}) · Target {Math.round(derived.dailyTargetMl)} ml/day
       </Text>
+      {(() => {
+        const liveSmoothedMl = smoothedAtTime(feeds, derived.hourlyRate, now);
+        const liveSmoothedPct = liveSmoothedMl / derived.dailyTargetMl * 100;
+        const diff = Math.abs(liveSmoothedPct - smoothedPct);
+        if (diff < 3) return null; // no meaningful difference, don't show
+        return (
+          <Text style={[styles.subtitle, { color: liveSmoothedPct >= 100 ? '#fb923c' : '#4ade80', marginTop: -4 }]}>
+            Live now: {Math.round(liveSmoothedMl)} ml · {Math.round(liveSmoothedPct)}%
+          </Text>
+        );
+      })()}
 
       {/* 1. Status Card */}
       <StatusCard
