@@ -1,8 +1,10 @@
 import React from 'react';
+import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
 
 import DashboardScreen from './src/screens/DashboardScreen';
 import LogScreen from './src/screens/LogScreen';
@@ -35,6 +37,9 @@ const MilkWiseTheme = {
 };
 
 export default function App() {
+  const [fontsLoaded] = useFonts(Ionicons.font);
+  if (!fontsLoaded) return <View style={{ flex: 1, backgroundColor: '#0f172a' }} />;
+
   return (
     <NavigationContainer theme={MilkWiseTheme}>
       <StatusBar style="light" />
