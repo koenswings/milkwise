@@ -46,7 +46,7 @@ export function generateId(): string {
 export async function getFeeds(): Promise<Feed[]> {
   if (USE_API) {
     try {
-      const res = await fetch(`${API_URL}/api/feeds`, { cache: 'no-store' });
+      const res = await fetch(`${API_URL}/api/feeds`);
       if (res.ok) return res.json() as Promise<Feed[]>;
     } catch {}
     return [];
@@ -94,7 +94,7 @@ export async function deleteFeed(id: string): Promise<Feed[]> {
 export async function getSettings(): Promise<Settings> {
   if (USE_API) {
     try {
-      const res = await fetch(`${API_URL}/api/settings`, { cache: 'no-store' });
+      const res = await fetch(`${API_URL}/api/settings`);
       if (res.ok) return { ...DEFAULT_SETTINGS, ...(await res.json() as Partial<Settings>) };
     } catch {}
     return DEFAULT_SETTINGS;
@@ -107,7 +107,7 @@ export async function getSettings(): Promise<Settings> {
 export async function getWeights(): Promise<WeightEntry[]> {
   if (USE_API) {
     try {
-      const res = await fetch(`${API_URL}/api/weights`, { cache: 'no-store' });
+      const res = await fetch(`${API_URL}/api/weights`);
       if (res.ok) return res.json() as Promise<WeightEntry[]>;
     } catch {}
     return [];
