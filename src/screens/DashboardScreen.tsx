@@ -361,9 +361,14 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         newWeightSource = 'manual';
       } else if (s.dateOfBirthMs && s.sex) {
         const predicted = predictWeightKg(w, s.dateOfBirthMs, s.sex, startOfTodayMs);
-        if (predicted !== null) {
+        if (predicted !== null && predicted <= latestWeight.weightKg * 1.15) {
+          // WHO projection sanity check: reject if >15% above last measured weight
           newEffectiveWeightKg = predicted;
           newWeightSource = 'who';
+        } else if (predicted !== null) {
+          // WHO predicts too high — use last measured weight as safer estimate
+          newEffectiveWeightKg = latestWeight.weightKg;
+          newWeightSource = 'manual';
         } else {
           newEffectiveWeightKg = latestWeight.weightKg;
           newWeightSource = 'manual';
