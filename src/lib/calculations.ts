@@ -426,11 +426,9 @@ export function intakeReadyAtMs(
   const currentSmoothed = smoothedAtTime(feeds, hourlyRate, now);
   // Small tolerance (1 ml) to absorb floating-point drift between the status display
   // (frozen at lastFeed.timestamp) and the live smoothed total (computed at now).
-  const TOLERANCE_ML = 1;
-  // Return now whenever the baby is underfed: the bottle achieves ≥100% status at any time,
-  // so the stomach constraint is the only binding one.
-  // Only binary-search when genuinely overfed (smoothed ≥ D): wait for intake to decay first.
-  if (currentSmoothed < dailyTargetMl - TOLERANCE_ML) return now;
+  // Return now only if giving this bottle keeps status at or below 105%.
+  // This prevents "Give now" leading to an immediate orange/red status.
+  if (currentSmoothed + milkMl <= dailyTargetMl * 1.05) return now;
 
   const T_max = now + 48 * 3_600_000;
   if (smoothedAtTime(feeds, hourlyRate, T_max) > targetBefore) return T_max; // still overfed at 48h

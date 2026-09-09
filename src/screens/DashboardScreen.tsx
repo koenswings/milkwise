@@ -219,6 +219,15 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
       const iMs = ghostIntakeReadyAtMs(feeds, e.waterMl, hourlyRate, dailyTargetMl, lastFeed.timestamp);
       ghostReadyAt.set(e.waterMl, Math.max(sMs, iMs));
     }
+    // Enforce ascending order: ghost markers must appear left-to-right smallest-to-largest.
+    // When overfed, smaller bottles can compute a later ghost time than larger ones.
+    const orderedSizes = [...ghostReadyAt.keys()].sort((a, b) => a - b);
+    let prevGhostMs = 0;
+    for (const w of orderedSizes) {
+      const ghostMs = Math.max(ghostReadyAt.get(w)!, prevGhostMs);
+      ghostReadyAt.set(w, ghostMs);
+      prevGhostMs = ghostMs;
+    }
   }
 
   // Build marker list
