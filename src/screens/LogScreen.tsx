@@ -13,8 +13,9 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getFeeds, addFeed, generateId, getSettings } from '../lib/store';
 import { formatDateTime } from '../lib/formatTime';
+import { buildNewFeed } from '../lib/newFeed';
 import { Feed, Settings } from '../types';
-import { deriveSettings, waterToMilk, milkToWater } from '../lib/calculations';
+import { waterToMilk, milkToWater } from '../lib/calculations';
 
 const COLORS = {
   bg: '#0f172a',
@@ -83,13 +84,7 @@ export default function LogScreen({ navigation }: any) {
       return;
     }
 
-    const derived = settings ? deriveSettings(settings) : null;
-    const feed: Feed = {
-      id: generateId(),
-      timestamp: ts,
-      volume: vol,
-      ...(derived ? { targetMlPerDay: Math.round(derived.dailyTargetMl) } : {}),
-    };
+    const feed: Feed = buildNewFeed(generateId(), ts, vol);
 
     await addFeed(feed);
     navigation.navigate('Dashboard');
