@@ -12,6 +12,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feed, Settings, WeightEntry } from '../types';
+import type { HistoryEntry } from './settingsHistory';
 
 // Fallback to Pi (idea02) Tailscale IP so EAS builds always connect.
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://100.85.108.118:3333';
@@ -102,6 +103,17 @@ export async function getSettings(): Promise<Settings> {
   const raw = await AsyncStorage.getItem(SETTINGS_KEY);
   if (!raw) return DEFAULT_SETTINGS;
   try { return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) as Partial<Settings> }; } catch { return DEFAULT_SETTINGS; }
+}
+
+/** Settings history (server JSONL) for replaying past zones with the settings in effect then. */
+export async function getSettingsHistory(): Promise<HistoryEntry[]> {
+  if (USE_API) {
+    try {
+      const res = await fetch(`${API_URL}/api/settings/history`);
+      if (res.ok) return (await res.json()) as HistoryEntry[];
+    } catch {}
+  }
+  return [];
 }
 
 export async function getWeights(): Promise<WeightEntry[]> {

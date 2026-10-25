@@ -194,34 +194,6 @@ export function smoothedEffective(
   return { totalMl, bottles };
 }
 
-/**
- * Ghost-specific: find earliest T (from refMs) where the smoothed intake
- * would be at 100% if a bottle of bottleWaterMl were given.
- * Uses 100.5% boundary so displayed time always shows 100%.
- */
-export function ghostIntakeReadyAtMs(
-  feeds: Feed[],
-  bottleWaterMl: number,
-  hourlyRate: number,
-  dailyTargetMl: number,
-  refMs: number
-): number {
-  const milkMl = waterToMilk(bottleWaterMl);
-  const target = dailyTargetMl * 1.005 - milkMl - 0.1;
-  const current = smoothedAtTime(feeds, hourlyRate, refMs);
-  if (current <= target) return refMs;
-  const T_max = refMs + 48 * 3_600_000;
-  if (smoothedAtTime(feeds, hourlyRate, T_max) > target) return T_max;
-  let lo = refMs, hi = T_max;
-  for (let i = 0; i < 60; i++) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (smoothedAtTime(feeds, hourlyRate, mid) > target) lo = mid;
-    else hi = mid;
-    if (hi - lo < 60_000) break;
-  }
-  return Math.ceil(hi / 60_000) * 60_000;
-}
-
 export function avgIntervalHours(feeds: Feed[]): number | null {
   const sorted = [...feeds].sort((a, b) => a.timestamp - b.timestamp);
   if (sorted.length < 2) return null;
@@ -409,10 +381,47 @@ export function stomachReadyAtMs(
   return atMs + dtHours * 3_600_000;
 }
 
+// ── BEGIN SHARED: feeding-zones (web canonical; byte-identical in milkwise) ──────
+//
+// Every function below takes an explicit reference time (refMs / now / fromMs) and
+// never reads the clock. Bottle sizes are WATER ml at the API; the intake model works
+// in formula (milk) ml internally via waterToMilk. See design/2026-10-25-feeding-zones.md.
+
+const INTAKE_HORIZON_MS = 48 * 3_600_000;
+
 /**
- * When has the 24h intake decayed enough that adding this bottle lands on target?
- * Returns now if already underfed (no waiting needed).
- * Capped at 48h.
+ * First T ≥ fromMs at which giving `milkMl` lands at or below `pct` % of the daily
+ * target:  I(T) + milkMl ≤ pct/100 · D.  I(T) = smoothedAtTime is non-increasing
+ * between feeds (§3.1), so a binary search (1-min resolution) is exact.
+ * Capped at fromMs + 48 h (returned when the level is still not reached there).
+ */
+export function intakeLevelAtPctMs(
+  feeds: Feed[],
+  milkMl: number,
+  hourlyRate: number,
+  dailyTargetMl: number,
+  pct: number,
+  fromMs: number
+): number {
+  const limit = (pct / 100) * dailyTargetMl - milkMl;
+  if (smoothedAtTime(feeds, hourlyRate, fromMs) <= limit) return fromMs;
+  const T_max = fromMs + INTAKE_HORIZON_MS;
+  if (smoothedAtTime(feeds, hourlyRate, T_max) > limit) return T_max;
+  let lo = fromMs, hi = T_max;
+  for (let i = 0; i < 60; i++) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (smoothedAtTime(feeds, hourlyRate, mid) > limit) lo = mid;
+    else hi = mid;
+    if (hi - lo < 60_000) break;
+  }
+  return hi; // hi always satisfies the level
+}
+
+/**
+ * Classic timeline readiness — single 100 % rule (§11c).
+ * Returns `now` iff giving this bottle now lands at or below 100 % of the daily target
+ * (+1 ml tolerance for floating-point drift); otherwise the first time it lands at 100 %.
+ * Capped at now + 48 h.
  */
 export function intakeReadyAtMs(
   feeds: Feed[],
@@ -422,36 +431,22 @@ export function intakeReadyAtMs(
   now: number
 ): number {
   const milkMl = waterToMilk(bottleWaterMl);
-  const targetBefore = dailyTargetMl - milkMl;
-  const currentSmoothed = smoothedAtTime(feeds, hourlyRate, now);
-  // Small tolerance (1 ml) to absorb floating-point drift between the status display
-  // (frozen at lastFeed.timestamp) and the live smoothed total (computed at now).
-  // Return now only if giving this bottle keeps status at or below 105%.
-  // This prevents "Give now" leading to an immediate orange/red status.
-  if (currentSmoothed + milkMl <= dailyTargetMl * 1.05) return now;
+  if (smoothedAtTime(feeds, hourlyRate, now) + milkMl <= dailyTargetMl + 1) return now;
+  return intakeLevelAtPctMs(feeds, milkMl, hourlyRate, dailyTargetMl, 100, now);
+}
 
-  const T_max = now + 48 * 3_600_000;
-  if (smoothedAtTime(feeds, hourlyRate, T_max) > targetBefore) return T_max; // still overfed at 48h
-
-  let lo = now, hi = T_max;
-  for (let i = 0; i < 40; i++) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (smoothedAtTime(feeds, hourlyRate, mid) > targetBefore) lo = mid;
-    else hi = mid;
-    if (hi - lo < 60_000) break;
-  }
-  return Math.floor((lo + hi) / 2);
+/** Candidate bottle sizes: 30 ml up to preferred + 1 size (§3.5 ceiling). */
+function candidateBottleSizes(preferredBottleWaterMl: number): number[] {
+  const allSizes = FORMULA_TABLE.map(e => e.water);
+  const prefIdx = allSizes.indexOf(preferredBottleWaterMl);
+  const maxIdx = prefIdx >= 0 ? Math.min(prefIdx + 1, allSizes.length - 1) : allSizes.length - 1;
+  return allSizes.slice(0, maxIdx + 1);
 }
 
 /**
- * Returns a progression of bottle sizes the baby SHOULD take, combining both
- * the stomach constraint and the intake constraint:
- *
- *   readyAt(X) = max(stomachReadyAtMs(X), intakeReadyAtMs(X))
- *
- * Noise-cutting rule: show only from the LARGEST size available now upward.
- * If nothing is available now, show all sizes (all in the future).
- * Sizes capped at preferred+1.
+ * Classic timeline progression: every size from 30 ml up to preferred+1, ready at
+ *   readyAt(X) = max(stomachReadyAtMs(X), intakeReadyAtMs(X))   (100 % rule)
+ * isAdvised: true for the largest size with fitsNow === true (none if nothing fits).
  */
 export function canTakeProgression(
   feeds: Feed[],
@@ -460,13 +455,7 @@ export function canTakeProgression(
   hourlyRate: number,
   dailyTargetMl: number
 ): Array<{ waterMl: number; milkMl: number; readyAtMs: number; fitsNow: boolean; isPreferred: boolean; isAdvised: boolean }> {
-  const allSizes = FORMULA_TABLE.map(e => e.water);
-  const prefIdx = allSizes.indexOf(preferredBottleWaterMl);
-  // Include preferred + one size above (recovery bottle). §7.2 ceiling is preferred+1.
-  const maxIdx = prefIdx >= 0 ? Math.min(prefIdx + 1, allSizes.length - 1) : allSizes.length - 1;
-  const candidateSizes = allSizes.slice(0, maxIdx + 1);
-
-  const entries = candidateSizes.map(w => {
+  const entries = candidateBottleSizes(preferredBottleWaterMl).map(w => {
     const milkMl = Math.round(waterToMilk(w));
     const sReady = stomachReadyAtMs(feeds, w, preferredBottleWaterMl, now, hourlyRate);
     const iReady = intakeReadyAtMs(feeds, w, hourlyRate, dailyTargetMl, now);
@@ -475,19 +464,130 @@ export function canTakeProgression(
     return { waterMl: w, milkMl, readyAtMs, fitsNow, isPreferred: w === preferredBottleWaterMl, isAdvised: false };
   });
 
-  // isAdvised: largest size with fitsNow === true
   const availableNow = entries.filter(e => e.fitsNow);
   if (availableNow.length > 0) {
     const advisedWater = availableNow[availableNow.length - 1].waterMl;
     entries.forEach(e => { e.isAdvised = e.waterMl === advisedWater; });
   }
-
-  const startWater = availableNow.length > 0
-    ? availableNow[availableNow.length - 1].waterMl  // largest available now
-    : entries[0].waterMl;                             // nothing available — show all
-
-  return entries.filter(e => e.waterMl >= startWater);
+  return entries;
 }
+
+export type ZoneState = 'zone' | 'collapsed' | 'beyond-horizon';
+
+export interface IntakeZone {
+  waterMl: number;          // bottle size (water ml)
+  milkMl: number;           // waterToMilk(waterMl), rounded
+  stomachFitsMs: number;    // S = stomachReadyAtMs(...)
+  openMs: number;           // max(S, t105); for a collapsed size = S
+  closeMs: number | null;   // t100; null when collapsed (never lands ≥ 100 % after S) or beyond-horizon
+  state: ZoneState;         // 'beyond-horizon' when open ≥ refMs + 48 h
+  landingAtOpenPct: number; // (I(open) + B) / D × 100 — start-% label (≤ 105; ≤ 100 when collapsed)
+}
+
+export interface ZoneRow extends IntakeZone {
+  isPreferred: boolean;
+  isHighlighted: boolean;   // at most one row
+  highlightKind: 'in-zone' | 'under-target' | null;
+  landingNowPct: number;    // (I(atMs) + B) / D × 100
+}
+
+/**
+ * Zone of bottle X computed from refMs (§3.2):
+ *   S = stomach fits, t105 / t100 = first T ≥ refMs landing at 105 % / 100 %.
+ *   Real zone iff I(S) + B > D:  [open, close) = [max(S, t105), t100).
+ *   Otherwise collapsed at S (lands ≤ 100 % from S on).
+ */
+export function intakeZone(
+  feeds: Feed[],
+  bottleWaterMl: number,
+  preferredBottleWaterMl: number,
+  hourlyRate: number,
+  dailyTargetMl: number,
+  refMs: number
+): IntakeZone {
+  const B = waterToMilk(bottleWaterMl);
+  const pctAt = (t: number) => ((smoothedAtTime(feeds, hourlyRate, t) + B) / dailyTargetMl) * 100;
+  const S = stomachReadyAtMs(feeds, bottleWaterMl, preferredBottleWaterMl, refMs, hourlyRate);
+  const base = { waterMl: bottleWaterMl, milkMl: Math.round(B), stomachFitsMs: S };
+  const horizon = refMs + INTAKE_HORIZON_MS;
+
+  if (pctAt(S) > 100) {
+    const t105 = intakeLevelAtPctMs(feeds, B, hourlyRate, dailyTargetMl, 105, refMs);
+    const t100 = intakeLevelAtPctMs(feeds, B, hourlyRate, dailyTargetMl, 100, refMs);
+    const openMs = Math.max(S, t105);
+    if (openMs >= horizon) {
+      return { ...base, openMs, closeMs: null, state: 'beyond-horizon', landingAtOpenPct: pctAt(openMs) };
+    }
+    if (t100 > openMs) {
+      return { ...base, openMs, closeMs: t100, state: 'zone', landingAtOpenPct: pctAt(openMs) };
+    }
+  }
+  return {
+    ...base, openMs: S, closeMs: null,
+    state: S >= horizon ? 'beyond-horizon' : 'collapsed',
+    landingAtOpenPct: pctAt(S),
+  };
+}
+
+/**
+ * Zones timeline rows for sizes 30 ml … preferred + 1, computed from refMs
+ * (use lastFeed.timestamp, or a past feed's timestamp for replay — never "now").
+ * Highlight evaluated at atMs (defaults to refMs):
+ *   1. among sizes whose zone contains atMs: landing % closest to 100, tie → larger size;
+ *   2. else the largest size that fits the stomach and lands ≤ 100 % ('under-target');
+ *   3. else none.
+ */
+export function zonesProgression(
+  feeds: Feed[],
+  preferredBottleWaterMl: number,
+  hourlyRate: number,
+  dailyTargetMl: number,
+  refMs: number,
+  atMs: number = refMs
+): ZoneRow[] {
+  const rows: ZoneRow[] = candidateBottleSizes(preferredBottleWaterMl).map(w => {
+    const z = intakeZone(feeds, w, preferredBottleWaterMl, hourlyRate, dailyTargetMl, refMs);
+    const landingNowPct = ((smoothedAtTime(feeds, hourlyRate, atMs) + waterToMilk(w)) / dailyTargetMl) * 100;
+    return { ...z, isPreferred: w === preferredBottleWaterMl, isHighlighted: false, highlightKind: null, landingNowPct };
+  });
+
+  highlightZoneRows(rows, atMs);
+  return rows;
+}
+
+/**
+ * Mark at most one row as highlighted (mutates and returns `rows`), evaluated at atMs:
+ *   1. in zone (open ≤ atMs < close): landingNowPct closest to 100, tie → larger size;
+ *   2. else the largest size with stomachFitsMs ≤ atMs and landingNowPct ≤ 100 → 'under-target';
+ *   3. else none.
+ * Rows must be in ascending size order.
+ */
+export function highlightZoneRows(rows: ZoneRow[], atMs: number): ZoneRow[] {
+  const EPS = 1e-9;
+  for (const r of rows) { r.isHighlighted = false; r.highlightKind = null; }
+  let best: ZoneRow | null = null;
+  for (const r of rows) {
+    const inZone = r.state === 'zone' && r.closeMs !== null && r.openMs <= atMs && atMs < r.closeMs;
+    if (!inZone) continue;
+    if (!best || Math.abs(r.landingNowPct - 100) <= Math.abs(best.landingNowPct - 100) + EPS) best = r;
+  }
+  if (best) {
+    best.isHighlighted = true;
+    best.highlightKind = 'in-zone';
+    return rows;
+  }
+  let under: ZoneRow | null = null;
+  for (const r of rows) {
+    if (r.stomachFitsMs <= atMs && r.landingNowPct <= 100 + EPS) under = r;
+  }
+  if (under) {
+    under.isHighlighted = true;
+    under.highlightKind = 'under-target';
+  }
+  return rows;
+}
+
+// ── END SHARED: feeding-zones ────────────────────────────────────────────────────
 
 /** Compute both predictors (A and B) from feeds + settings */
 export function computePredictors(
