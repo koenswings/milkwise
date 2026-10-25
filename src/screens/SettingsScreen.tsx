@@ -13,6 +13,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getSettings, saveSettings, saveFeeds, saveErrorMessage } from '../lib/store';
 import { deriveSettings } from '../lib/calculations';
+import { settingsToSave } from '../lib/settingsForm';
 import { Feed, Settings } from '../types';
 
 const COLORS = {
@@ -74,6 +75,7 @@ export default function SettingsScreen() {
   const [yellowThreshStr, setYellowThreshStr] = useState('5');
   const [redThreshStr, setRedThreshStr] = useState('10');
   const [timeFormat, setTimeFormatState] = useState<'24h' | '12h'>('24h');
+  const [timelineView, setTimelineView] = useState<'zones' | 'timeline' | 'cards'>('zones');
   const [csvText, setCsvText] = useState('');
 
   const load = useCallback(async () => {
@@ -85,6 +87,7 @@ export default function SettingsScreen() {
     setYellowThreshStr(String(s.yellowThresholdPct));
     setRedThreshStr(String(s.redThresholdPct));
     setTimeFormatState(s.timeFormat ?? '24h');
+    setTimelineView(s.feedingTimelineView ?? 'zones');
   }, []);
 
   useFocusEffect(
@@ -105,7 +108,11 @@ export default function SettingsScreen() {
       return;
     }
 
-    const newSettings: Settings = { weightKg, mlPerKgPerDay, preferredBottleWaterMl, yellowThresholdPct, redThresholdPct, timeFormat };
+    // Keep every key the form does not edit (view marker, DOB, sex, …): the server stores the whole object.
+    const newSettings: Settings = settingsToSave(settings, {
+      weightKg, mlPerKgPerDay, preferredBottleWaterMl, yellowThresholdPct, redThresholdPct, timeFormat,
+      feedingTimelineView: timelineView,
+    });
     try {
       await saveSettings(newSettings);
     } catch (e) {
@@ -230,6 +237,24 @@ export default function SettingsScreen() {
               </TouchableOpacity>
             ))}
           </View>
+
+          <Text style={[styles.label, { marginTop: 16 }]}>Feeding timeline</Text>
+          <View style={styles.toggleRow}>
+            {(['zones', 'timeline'] as const).map((v) => (
+              <TouchableOpacity
+                key={v}
+                style={[styles.quickBtn, timelineView === v && styles.quickBtnActive]}
+                onPress={() => setTimelineView(v)}
+              >
+                <Text style={[styles.quickBtnText, timelineView === v && styles.quickBtnTextActive]}>
+                  {v === 'zones' ? 'Zones' : 'Classic'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={styles.hint}>
+            Zones: when each bottle size lands between 105 % and 100 %. Classic: one marker per size at its 100 % time.
+          </Text>
 
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
             <Text style={styles.saveButtonText}>💾 Save Settings</Text>
