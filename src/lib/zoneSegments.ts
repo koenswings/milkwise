@@ -6,8 +6,8 @@
 // Zones are frozen at the last feed; the highlight is evaluated now (§10). zoneSegments never
 // takes the display clock, so a clock tick must only call highlightSegmentsAt.
 import { Feed, Settings } from "../types";
-import { ZoneRow, effectiveWeightKg, highlightZoneRows, smoothedAtTime, waterToMilk, zonesProgression } from "./calculations";
-import { HistoryEntry, settingsForFeed, settingsForReplay } from "./settingsHistory";
+import { WeightSource, ZoneRow, effectiveWeightKg, highlightZoneRows, smoothedAtTime, waterToMilk, zonesProgression } from "./calculations";
+import { HistoryEntry, settingsForFeed } from "./settingsHistory";
 
 export interface ZoneSegment {
   feed: Feed;             // the feed that starts this segment (refMs = feed.timestamp)
@@ -23,9 +23,9 @@ export interface ZoneSegment {
 
 /**
  * Segments from `dayStartMs` up to the last feed. Every segment — the current one included —
- * uses the effective weight at its own feed timestamp (weigh-ins after the feed are ignored,
- * effectiveWeightKg), so a new weigh-in takes effect from the next feed. The status card uses
- * the same weight at lastFeed.timestamp (frozen status), so the two never disagree.
+ * uses frozenCalcSettings at its own feed timestamp (settings history + effective weight; later
+ * settings changes and weigh-ins are ignored), so changes take effect from the next feed. The
+ * status card uses the same function at lastFeed.timestamp, so the two never disagree.
  */
 export function zoneSegments(
   feeds: Feed[],
@@ -45,13 +45,10 @@ export function zoneSegments(
     const feed = sorted[i];
     const isCurrent = i === sorted.length - 1;
     const upTo = sorted.slice(0, i + 1);
-    const replay = isCurrent
-      ? settingsForReplay(entries, current, upTo)!
-      : settingsForFeed(entries, current, feed);
-    const s = replay.settings;
-    // Fallback (no weigh-in yet): replayed settings weight; current segment = live settings, like the status card.
-    const fallbackKg = isCurrent ? current.weightKg : s.weightKg;
-    const weightKg = effectiveWeightKg(weights, fallbackKg, current.dateOfBirthMs, current.sex, feed.timestamp).weightKg;
+    // Same function as the status card: every calc param + weight frozen at this feed.
+    const fc = frozenCalcSettings(upTo, current, entries, weights, feed.timestamp);
+    const s = fc.settings;
+    const weightKg = fc.weightKg;
     const D = weightKg * s.mlPerKgPerDay;
     const rows = zonesProgression(upTo, s.preferredBottleWaterMl, D / 24, D, feed.timestamp);
     out.push({
@@ -62,7 +59,7 @@ export function zoneSegments(
       preferredBottleWaterMl: s.preferredBottleWaterMl,
       weightKg,
       dailyTargetMl: D,
-      approximate: replay.approximate,
+      approximate: fc.approximate,
       rows,
     });
   }
@@ -83,16 +80,41 @@ export function highlightSegmentsAt(segments: ZoneSegment[], feeds: Feed[], atMs
   });
 }
 
+/** Every calculation parameter frozen at one reference time (the last feed). */
+export interface FrozenCalc {
+  refMs: number;           // lastFeed.timestamp, or noFeedRefMs when there are no feeds
+  settings: Settings;      // settingsAt(refMs) with weightKg = effective weight; display-only keys from live settings
+  weightKg: number;
+  weightSource: WeightSource;
+  approximate: boolean;    // refMs before the first history snapshot
+}
+
 /**
- * Weight behind the frozen status card: effectiveWeightKg at lastFeed.timestamp (or at
- * `noFeedRefMs` when there are no feeds) — the same weight the current zone segment uses.
+ * Calculation settings for the frozen status card and the current zone segment:
+ * settingsForFeed (settings history) at lastFeed.timestamp for ml/kg/day, preferred size,
+ * thresholds and every other calc param, plus effectiveWeightKg at that time. Settings or
+ * weigh-ins changed after the last feed take effect from the next feed. Display-only keys
+ * (timeFormat, feedingTimelineView, its marker) always come from the live settings.
  */
-export function statusWeight(
+export function frozenCalcSettings(
   feeds: Feed[],
   current: Settings,
+  entries: HistoryEntry[],
   weights: Array<{ timestamp: number; weightKg: number }>,
   noFeedRefMs: number,
-): ReturnType<typeof effectiveWeightKg> {
+): FrozenCalc {
   const refMs = feeds.length > 0 ? Math.max(...feeds.map(f => f.timestamp)) : noFeedRefMs;
-  return effectiveWeightKg(weights, current.weightKg, current.dateOfBirthMs, current.sex, refMs);
+  const at = feeds.length > 0 ? settingsForFeed(entries, current, { timestamp: refMs }) : { settings: current, approximate: false };
+  const s = at.settings;
+  const w = effectiveWeightKg(weights, s.weightKg, s.dateOfBirthMs, s.sex, refMs);
+  const settings: Settings = {
+    ...s,
+    weightKg: w.weightKg,
+    timeFormat: current.timeFormat,
+    feedingTimelineView: current.feedingTimelineView,
+    feedingTimelineViewMigrated: current.feedingTimelineViewMigrated,
+  };
+  if (settings.feedingTimelineView === undefined) delete settings.feedingTimelineView;
+  if (settings.feedingTimelineViewMigrated === undefined) delete settings.feedingTimelineViewMigrated;
+  return { refMs, settings, weightKg: w.weightKg, weightSource: w.source, approximate: at.approximate };
 }
