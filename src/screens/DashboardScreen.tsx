@@ -24,7 +24,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
 import { buildClassicMarkers } from '../lib/classicMarkers';
-import { highlightSegmentsAt, statusWeight, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
+import { frozenCalcSettings, highlightSegmentsAt, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
 import { startDashboardRefresh } from '../lib/dashboardRefresh';
 import { sizeColour } from '../lib/sizeColours';
 import type { HistoryEntry } from '../lib/settingsHistory';
@@ -393,8 +393,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(Date.now());
-  const [effectiveWeightKg, setEffectiveWeightKg] = useState<number>(6.27);
-  const [weightSource, setWeightSource] = useState<'manual' | 'who' | 'settings'>('settings');
 
   const load = useCallback(async () => {
     const [f, s, w, h] = await Promise.all([getFeeds(), getSettings(), getWeights(), getSettingsHistory()]);
@@ -403,19 +401,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     setSettings(s);
     setWeights(w);
 
-    // WHO weight model — mirrors web app page.tsx
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayMs = startOfToday.getTime();
-
-    // Status is frozen at lastFeed.timestamp, so its weight is the effective weight at the last
-    // feed — the same as the current zone segment. A new weigh-in counts from the next feed.
-    const eff = statusWeight(f, s, w, startOfTodayMs);
-    const newEffectiveWeightKg = eff.weightKg;
-    const newWeightSource: 'manual' | 'who' | 'settings' = eff.source;
-
-    setEffectiveWeightKg(newEffectiveWeightKg);
-    setWeightSource(newWeightSource);
     // Don't update 'now' here — only the timer tick updates it so status stays frozen
   }, []);
 
@@ -425,11 +410,21 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     useCallback(() => startDashboardRefresh(load, () => setNow(Date.now())), [load])
   );
 
-  const derived = deriveSettings({ ...settings, weightKg: effectiveWeightKg });
+  const dayStartMs = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+  // Every calculation parameter (ml/kg/day, preferred size, thresholds, weight, …) is frozen at
+  // lastFeed.timestamp — the same frozenCalcSettings the current zone segment uses. Live
+  // `settings` is only used for display-only keys and the edit controls.
+  const fc = useMemo(
+    () => frozenCalcSettings(feeds, settings, history, weights, dayStartMs),
+    [feeds, settings, history, weights, dayStartMs],
+  );
+  const calc = fc.settings;
+  const effectiveWeightKg = fc.weightKg;
+  const weightSource = fc.weightSource;
+  const derived = deriveSettings(calc);
 
   // Zones frozen at the last feed: recomputed only when data changes or the day rolls over,
   // never on a clock tick. A tick re-runs only the highlight (§10).
-  const dayStartMs = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); })();
   const zonesFrozen = useMemo(
     () => zoneSegments(feeds, settings, history, weights, dayStartMs),
     [feeds, settings, history, weights, dayStartMs],
@@ -444,20 +439,20 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const smoothedAt = lastFeed ? lastFeed.timestamp : now;
 
   const { totalMl: smoothedMl } = smoothedEffective(
-    feeds, derived.hourlyRate, settings.preferredBottleWaterMl, smoothedAt
+    feeds, derived.hourlyRate, calc.preferredBottleWaterMl, smoothedAt
   );
   const smoothedPct = (smoothedMl / derived.dailyTargetMl) * 100;
 
   // Stomach at live now (for StatusCard right column)
-  const capMilkVal = stomachCapMilk(settings.preferredBottleWaterMl, derived.hourlyRate);
+  const capMilkVal = stomachCapMilk(calc.preferredBottleWaterMl, derived.hourlyRate);
   const loadNow = stomachLoad(feeds, now);
 
   const recentFeeds = [...feeds]
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 3);
 
-  const y = settings.yellowThresholdPct;
-  const r = settings.redThresholdPct;
+  const y = calc.yellowThresholdPct;
+  const r = calc.redThresholdPct;
   const tf = settings.timeFormat;
 
   return (
@@ -511,7 +506,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       ) : (
         <FeedingTimeline
           feeds={feeds}
-          preferredBottleWaterMl={settings.preferredBottleWaterMl}
+          preferredBottleWaterMl={calc.preferredBottleWaterMl}
           now={now}
           hourlyRate={derived.hourlyRate}
           dailyTargetMl={derived.dailyTargetMl}
@@ -523,9 +518,9 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       <View style={[styles.card, { marginBottom: 12 }]}>
         <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
         {(() => {
-          const prog = canTakeProgression(feeds, settings.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
+          const prog = canTakeProgression(feeds, calc.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
           // Find the entry for the preferred bottle size specifically
-          const preferredEntry = prog.find(e => e.waterMl === settings.preferredBottleWaterMl);
+          const preferredEntry = prog.find(e => e.waterMl === calc.preferredBottleWaterMl);
 
           if (!preferredEntry) {
             return <Text style={styles.cardSub}>No feeds yet</Text>;
@@ -534,7 +529,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
             return (
               <>
-                <Text style={[styles.cardValue, { color: C.green }]}>Now · {settings.preferredBottleWaterMl} 🍼</Text>
+                <Text style={[styles.cardValue, { color: C.green }]}>Now · {calc.preferredBottleWaterMl} 🍼</Text>
                 <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
               </>
             );
@@ -542,7 +537,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             return (
               <>
                 <Text style={[styles.cardValue, { color: C.rose }]}>
-                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {settings.preferredBottleWaterMl} 🍼
+                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {calc.preferredBottleWaterMl} 🍼
                 </Text>
                 <Text style={[styles.cardSub, { color: C.rose }]}>{formatRelative(preferredEntry.readyAtMs, now)}</Text>
               </>
@@ -558,7 +553,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
           <Text style={styles.cardMuted}>·</Text>
           <Text style={[styles.cardValue, { fontSize: 15 }]}>
-            {settings.preferredBottleWaterMl} ml bottle
+            {calc.preferredBottleWaterMl} ml bottle
             {(() => {
               const h = Math.floor(derived.idealIntervalHours);
               const m = Math.round((derived.idealIntervalHours - h) * 60);
@@ -605,7 +600,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           <Text style={styles.editIcon}>✏️</Text>
         </TouchableOpacity>
         <Text style={styles.cardMuted}>
-            {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO est.' : weightSource === 'manual' ? 'measured' : 'settings'}) × {settings.mlPerKgPerDay} ml/kg/day
+            {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO est.' : weightSource === 'manual' ? 'measured' : 'settings'}) × {calc.mlPerKgPerDay} ml/kg/day
           </Text>
         <Text style={styles.cardMuted}>
           Thresholds: ±{y}% yellow · ±{r}% red
