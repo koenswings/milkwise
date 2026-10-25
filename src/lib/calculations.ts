@@ -1,4 +1,5 @@
 import { Feed, Settings, DerivedSettings, FeedWithCredit, PredictorResult } from '../types';
+import { predictWeightKg } from './whoGrowth';
 
 /**
  * Water → prepared formula conversion.
@@ -585,6 +586,36 @@ export function highlightZoneRows(rows: ZoneRow[], atMs: number): ZoneRow[] {
     under.highlightKind = 'under-target';
   }
   return rows;
+}
+
+/** A measured weight is used directly while it is at most this old (inclusive). */
+export const WEIGHT_FRESH_MS = 7 * 86_400_000;
+
+export type WeightSource = 'manual' | 'who' | 'settings';
+
+/**
+ * Effective weight at refMs (pure; no clock). Only weigh-ins at or before refMs count:
+ *   - none → fallbackKg ('settings');
+ *   - latest weigh-in ≤ WEIGHT_FRESH_MS older than refMs → that measured weight ('manual');
+ *   - older → WHO prediction at refMs from those weigh-ins when DOB and sex are known ('who'),
+ *     else the latest measured weight ('manual').
+ */
+export function effectiveWeightKg(
+  weights: Array<{ timestamp: number; weightKg: number }>,
+  fallbackKg: number,
+  dateOfBirthMs: number | undefined,
+  sex: 'M' | 'F' | undefined,
+  refMs: number
+): { weightKg: number; source: WeightSource } {
+  const known = weights.filter(w => w.timestamp <= refMs).sort((a, b) => a.timestamp - b.timestamp);
+  if (known.length === 0) return { weightKg: fallbackKg, source: 'settings' };
+  const latest = known[known.length - 1];
+  if (refMs - latest.timestamp <= WEIGHT_FRESH_MS) return { weightKg: latest.weightKg, source: 'manual' };
+  if (dateOfBirthMs !== undefined && sex !== undefined) {
+    const predicted = predictWeightKg(known, dateOfBirthMs, sex, refMs);
+    if (predicted !== null && predicted > 0) return { weightKg: predicted, source: 'who' };
+  }
+  return { weightKg: latest.weightKg, source: 'manual' };
 }
 
 // ── END SHARED: feeding-zones ────────────────────────────────────────────────────

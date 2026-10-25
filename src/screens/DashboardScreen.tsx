@@ -10,7 +10,7 @@
  *   6. Last 3 feeds list
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,10 +24,9 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
 import { buildClassicMarkers } from '../lib/classicMarkers';
-import { zoneSegments, ZoneSegment } from '../lib/zoneSegments';
+import { highlightSegmentsAt, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
 import { sizeColour } from '../lib/sizeColours';
 import type { HistoryEntry } from '../lib/settingsHistory';
-import { predictWeightKg } from '../lib/whoGrowth';
 import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
   deriveSettings,
@@ -38,6 +37,7 @@ import {
   stomachLoad,
   canTakeProgression,
   statusHexColor,
+  effectiveWeightKg as computeEffectiveWeight,
 } from '../lib/calculations';
 import { Feed, Settings, WeightEntry } from '../types';
 
@@ -409,29 +409,10 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     startOfToday.setHours(0, 0, 0, 0);
     const startOfTodayMs = startOfToday.getTime();
 
-    let newEffectiveWeightKg = s.weightKg;
-    let newWeightSource: 'manual' | 'who' | 'settings' = 'settings';
-
-    if (w.length > 0) {
-      const latestWeight = [...w].sort((a, b) => b.timestamp - a.timestamp)[0];
-      const daysSinceLast = (startOfTodayMs - latestWeight.timestamp) / 86_400_000;
-      if (daysSinceLast <= 7) {
-        newEffectiveWeightKg = latestWeight.weightKg;
-        newWeightSource = 'manual';
-      } else if (s.dateOfBirthMs && s.sex) {
-        const predicted = predictWeightKg(w, s.dateOfBirthMs, s.sex, startOfTodayMs);
-        if (predicted !== null) {
-          newEffectiveWeightKg = predicted;
-          newWeightSource = 'who';
-        } else {
-          newEffectiveWeightKg = latestWeight.weightKg;
-          newWeightSource = 'manual';
-        }
-      } else {
-        newEffectiveWeightKg = latestWeight.weightKg;
-        newWeightSource = 'manual';
-      }
-    }
+    // Shared rule (effectiveWeightKg, refMs = start of today) — same as zone replay.
+    const eff = computeEffectiveWeight(w, s.weightKg, s.dateOfBirthMs, s.sex, startOfTodayMs);
+    const newEffectiveWeightKg = eff.weightKg;
+    const newWeightSource: 'manual' | 'who' | 'settings' = eff.source;
 
     setEffectiveWeightKg(newEffectiveWeightKg);
     setWeightSource(newWeightSource);
@@ -442,15 +423,23 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     useCallback(() => {
       load();
       // Tick every 30s: updates 'now' for relative time labels + re-fetches feeds
-      intervalRef.current = setInterval(() => {
-        setNow(Date.now());
-        load(); // re-fetch to pick up any new feeds logged elsewhere
-      }, 30_000);
+      // Tick every 30s: updates 'now' only (labels, now line, zone highlight). It never re-fetches
+      // feeds or recomputes zones — zones are frozen at the last feed (§10); data reloads on focus.
+      intervalRef.current = setInterval(() => setNow(Date.now()), 30_000);
       return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [load])
   );
 
   const derived = deriveSettings({ ...settings, weightKg: effectiveWeightKg });
+
+  // Zones frozen at the last feed: recomputed only when data changes or the day rolls over,
+  // never on a clock tick. A tick re-runs only the highlight (§10).
+  const dayStartMs = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); })();
+  const zonesFrozen = useMemo(
+    () => zoneSegments(feeds, settings, history, weights, effectiveWeightKg, dayStartMs),
+    [feeds, settings, history, weights, effectiveWeightKg, dayStartMs],
+  );
+  const zonesShown = useMemo(() => highlightSegmentsAt(zonesFrozen, feeds, now), [zonesFrozen, feeds, now]);
 
   const lastFeed = feeds.length > 0
     ? feeds.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
@@ -517,17 +506,14 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       />
 
       {/* 2. Feeding Timeline — Zones by default; 'cards' is web-only, so it shows Classic here */}
-      {(settings.feedingTimelineView ?? 'zones') === 'zones' ? (() => {
-        const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
-        return (
-          <ZonesTimeline
-            segments={zoneSegments(feeds, settings, history, effectiveWeightKg, dayStart.getTime(), now)}
-            now={now}
-            dayStartMs={dayStart.getTime()}
-            timeFormat={tf}
-          />
-        );
-      })() : (
+      {(settings.feedingTimelineView ?? 'zones') === 'zones' ? (
+        <ZonesTimeline
+          segments={zonesShown}
+          now={now}
+          dayStartMs={dayStartMs}
+          timeFormat={tf}
+        />
+      ) : (
         <FeedingTimeline
           feeds={feeds}
           preferredBottleWaterMl={settings.preferredBottleWaterMl}

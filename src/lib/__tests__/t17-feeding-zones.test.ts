@@ -4,7 +4,7 @@ import fx from "./fixtures/snapshot-20261024.json";
 import {
   intakeZone, intakeLevelAtPctMs, zonesProgression, highlightZoneRows, smoothedAtTime, waterToMilk, ZoneRow,
 } from "../calculations";
-import { zoneSegments } from "../zoneSegments";
+import { highlightSegmentsAt, zoneSegments } from "../zoneSegments";
 import { HistoryEntry } from "../settingsHistory";
 import { Feed, Settings } from "../../types";
 
@@ -147,7 +147,7 @@ describe("determinism and replay", () => {
         changes: { preferredBottleWaterMl: { old: 90, new: 120 } } },
     ];
     const dayStart = at("00:00");
-    const segs = zoneSegments(feeds, current, history, D / 150, dayStart, at("16:20"));
+    const segs = highlightSegmentsAt(zoneSegments(feeds, current, history, [], D / 150, dayStart), feeds, at("16:20"));
     const morning = segs.find((s) => s.feed.timestamp === at("09:12"))!;
     const after = segs.find((s) => s.feed.timestamp === at("12:00"))!;
     expect(morning.preferredBottleWaterMl).toBe(90);
