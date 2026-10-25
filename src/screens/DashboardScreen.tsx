@@ -10,7 +10,7 @@
  *   6. Last 3 feeds list
  */
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -24,7 +24,8 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
 import { buildClassicMarkers } from '../lib/classicMarkers';
-import { highlightSegmentsAt, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
+import { highlightSegmentsAt, statusWeight, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
+import { startDashboardRefresh } from '../lib/dashboardRefresh';
 import { sizeColour } from '../lib/sizeColours';
 import type { HistoryEntry } from '../lib/settingsHistory';
 import { formatTime, formatDateTime } from '../lib/formatTime';
@@ -37,7 +38,6 @@ import {
   stomachLoad,
   canTakeProgression,
   statusHexColor,
-  effectiveWeightKg as computeEffectiveWeight,
 } from '../lib/calculations';
 import { Feed, Settings, WeightEntry } from '../types';
 
@@ -395,7 +395,6 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [now, setNow] = useState(Date.now());
   const [effectiveWeightKg, setEffectiveWeightKg] = useState<number>(6.27);
   const [weightSource, setWeightSource] = useState<'manual' | 'who' | 'settings'>('settings');
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
     const [f, s, w, h] = await Promise.all([getFeeds(), getSettings(), getWeights(), getSettingsHistory()]);
@@ -409,8 +408,9 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     startOfToday.setHours(0, 0, 0, 0);
     const startOfTodayMs = startOfToday.getTime();
 
-    // Shared rule (effectiveWeightKg, refMs = start of today) — same as zone replay.
-    const eff = computeEffectiveWeight(w, s.weightKg, s.dateOfBirthMs, s.sex, startOfTodayMs);
+    // Status is frozen at lastFeed.timestamp, so its weight is the effective weight at the last
+    // feed — the same as the current zone segment. A new weigh-in counts from the next feed.
+    const eff = statusWeight(f, s, w, startOfTodayMs);
     const newEffectiveWeightKg = eff.weightKg;
     const newWeightSource: 'manual' | 'who' | 'settings' = eff.source;
 
@@ -419,15 +419,10 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     // Don't update 'now' here — only the timer tick updates it so status stays frozen
   }, []);
 
+  // Reload on focus and on return to foreground; the 30 s tick only moves 'now' (labels, now
+  // line, zone highlight) — never a feed fetch. Cleanup clears the timer and the AppState listener.
   useFocusEffect(
-    useCallback(() => {
-      load();
-      // Tick every 30s: updates 'now' for relative time labels + re-fetches feeds
-      // Tick every 30s: updates 'now' only (labels, now line, zone highlight). It never re-fetches
-      // feeds or recomputes zones — zones are frozen at the last feed (§10); data reloads on focus.
-      intervalRef.current = setInterval(() => setNow(Date.now()), 30_000);
-      return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    }, [load])
+    useCallback(() => startDashboardRefresh(load, () => setNow(Date.now())), [load])
   );
 
   const derived = deriveSettings({ ...settings, weightKg: effectiveWeightKg });
@@ -436,8 +431,8 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   // never on a clock tick. A tick re-runs only the highlight (§10).
   const dayStartMs = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); })();
   const zonesFrozen = useMemo(
-    () => zoneSegments(feeds, settings, history, weights, effectiveWeightKg, dayStartMs),
-    [feeds, settings, history, weights, effectiveWeightKg, dayStartMs],
+    () => zoneSegments(feeds, settings, history, weights, dayStartMs),
+    [feeds, settings, history, weights, dayStartMs],
   );
   const zonesShown = useMemo(() => highlightSegmentsAt(zonesFrozen, feeds, now), [zonesFrozen, feeds, now]);
 

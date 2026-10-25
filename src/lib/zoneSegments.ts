@@ -22,16 +22,16 @@ export interface ZoneSegment {
 }
 
 /**
- * Segments from `dayStartMs` up to the last feed. Past segments use the effective weight at
- * their own feed timestamp (weigh-ins after the feed are ignored, effectiveWeightKg).
- * The current segment uses `currentWeightKg` — the same D as the status card.
+ * Segments from `dayStartMs` up to the last feed. Every segment — the current one included —
+ * uses the effective weight at its own feed timestamp (weigh-ins after the feed are ignored,
+ * effectiveWeightKg), so a new weigh-in takes effect from the next feed. The status card uses
+ * the same weight at lastFeed.timestamp (frozen status), so the two never disagree.
  */
 export function zoneSegments(
   feeds: Feed[],
   current: Settings,
   entries: HistoryEntry[],
   weights: Array<{ timestamp: number; weightKg: number }>,
-  currentWeightKg: number,
   dayStartMs: number,
 ): ZoneSegment[] {
   const sorted = [...feeds].sort((a, b) => a.timestamp - b.timestamp);
@@ -49,9 +49,9 @@ export function zoneSegments(
       ? settingsForReplay(entries, current, upTo)!
       : settingsForFeed(entries, current, feed);
     const s = replay.settings;
-    const weightKg = isCurrent
-      ? currentWeightKg
-      : effectiveWeightKg(weights, s.weightKg, current.dateOfBirthMs, current.sex, feed.timestamp).weightKg;
+    // Fallback (no weigh-in yet): replayed settings weight; current segment = live settings, like the status card.
+    const fallbackKg = isCurrent ? current.weightKg : s.weightKg;
+    const weightKg = effectiveWeightKg(weights, fallbackKg, current.dateOfBirthMs, current.sex, feed.timestamp).weightKg;
     const D = weightKg * s.mlPerKgPerDay;
     const rows = zonesProgression(upTo, s.preferredBottleWaterMl, D / 24, D, feed.timestamp);
     out.push({
@@ -81,4 +81,18 @@ export function highlightSegmentsAt(segments: ZoneSegment[], feeds: Feed[], atMs
     const rows = sg.rows.map(r => ({ ...r, landingNowPct: ((I + waterToMilk(r.waterMl)) / sg.dailyTargetMl) * 100 }));
     return { ...sg, rows: highlightZoneRows(rows, atMs) };
   });
+}
+
+/**
+ * Weight behind the frozen status card: effectiveWeightKg at lastFeed.timestamp (or at
+ * `noFeedRefMs` when there are no feeds) — the same weight the current zone segment uses.
+ */
+export function statusWeight(
+  feeds: Feed[],
+  current: Settings,
+  weights: Array<{ timestamp: number; weightKg: number }>,
+  noFeedRefMs: number,
+): ReturnType<typeof effectiveWeightKg> {
+  const refMs = feeds.length > 0 ? Math.max(...feeds.map(f => f.timestamp)) : noFeedRefMs;
+  return effectiveWeightKg(weights, current.weightKg, current.dateOfBirthMs, current.sex, refMs);
 }
