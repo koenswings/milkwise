@@ -1,9 +1,12 @@
 // Zones timeline history — pure (no clock, no fs). design/2026-10-25-feeding-zones.md §10, §11.3.
 // History runs from midnight; every actual feed cuts the diagram and starts a fresh set of zones,
-// recomputed with that feed included and with the settings in effect at that feed
-// (settingsForFeed / settingsForReplay), never "now".
+// recomputed with that feed included, with the settings in effect at that feed
+// (settingsForFeed / settingsForReplay) and with the effective weight at that feed, never "now".
+//
+// Zones are frozen at the last feed; the highlight is evaluated now (§10). zoneSegments never
+// takes the display clock, so a clock tick must only call highlightSegmentsAt.
 import { Feed, Settings } from "../types";
-import { ZoneRow, zonesProgression } from "./calculations";
+import { ZoneRow, effectiveWeightKg, highlightZoneRows, smoothedAtTime, waterToMilk, zonesProgression } from "./calculations";
 import { HistoryEntry, settingsForFeed, settingsForReplay } from "./settingsHistory";
 
 export interface ZoneSegment {
@@ -12,26 +15,26 @@ export interface ZoneSegment {
   toMs: number | null;    // next feed timestamp (cut), null for the current segment
   isCurrent: boolean;
   preferredBottleWaterMl: number;
+  weightKg: number;       // effective weight used for D
   dailyTargetMl: number;  // formula ml
   approximate: boolean;   // settings before the first history snapshot
-  rows: ZoneRow[];
+  rows: ZoneRow[];        // highlight: past segments at their feed time; current segment at refMs until highlightSegmentsAt
 }
 
 /**
- * Segments from `dayStartMs` up to now. `weightKg` is the effective weight used for D (the
- * same value the dashboard uses); preferred size and ml/kg/day come from the settings history.
- * The current segment's highlight is evaluated at `atMs` (the display clock); past segments
- * are evaluated at their own feed time.
+ * Segments from `dayStartMs` up to the last feed. Past segments use the effective weight at
+ * their own feed timestamp (weigh-ins after the feed are ignored, effectiveWeightKg).
+ * The current segment uses `currentWeightKg` — the same D as the status card.
  */
 export function zoneSegments(
   feeds: Feed[],
   current: Settings,
   entries: HistoryEntry[],
-  weightKg: number,
+  weights: Array<{ timestamp: number; weightKg: number }>,
+  currentWeightKg: number,
   dayStartMs: number,
-  atMs: number,
 ): ZoneSegment[] {
-  const sorted = [...feeds].filter(f => f.timestamp <= atMs).sort((a, b) => a.timestamp - b.timestamp);
+  const sorted = [...feeds].sort((a, b) => a.timestamp - b.timestamp);
   if (sorted.length === 0) return [];
   let first = sorted.findIndex(f => f.timestamp >= dayStartMs);
   if (first === -1) first = sorted.length - 1;       // no feed today: show the segment after the last one
@@ -46,18 +49,36 @@ export function zoneSegments(
       ? settingsForReplay(entries, current, upTo)!
       : settingsForFeed(entries, current, feed);
     const s = replay.settings;
+    const weightKg = isCurrent
+      ? currentWeightKg
+      : effectiveWeightKg(weights, s.weightKg, current.dateOfBirthMs, current.sex, feed.timestamp).weightKg;
     const D = weightKg * s.mlPerKgPerDay;
-    const rows = zonesProgression(upTo, s.preferredBottleWaterMl, D / 24, D, feed.timestamp, isCurrent ? atMs : feed.timestamp);
+    const rows = zonesProgression(upTo, s.preferredBottleWaterMl, D / 24, D, feed.timestamp);
     out.push({
       feed,
       fromMs: Math.max(feed.timestamp, dayStartMs),
       toMs: isCurrent ? null : sorted[i + 1].timestamp,
       isCurrent,
       preferredBottleWaterMl: s.preferredBottleWaterMl,
+      weightKg,
       dailyTargetMl: D,
       approximate: replay.approximate,
       rows,
     });
   }
   return out;
+}
+
+/**
+ * Clock-tick step: re-evaluate only the current segment's highlight (landing % and
+ * highlightZoneRows) at atMs. Zone open/close times are copied unchanged; inputs are not mutated.
+ */
+export function highlightSegmentsAt(segments: ZoneSegment[], feeds: Feed[], atMs: number): ZoneSegment[] {
+  return segments.map(sg => {
+    if (!sg.isCurrent) return sg;
+    const upTo = feeds.filter(f => f.timestamp <= sg.feed.timestamp);
+    const I = smoothedAtTime(upTo, sg.dailyTargetMl / 24, atMs);
+    const rows = sg.rows.map(r => ({ ...r, landingNowPct: ((I + waterToMilk(r.waterMl)) / sg.dailyTargetMl) * 100 }));
+    return { ...sg, rows: highlightZoneRows(rows, atMs) };
+  });
 }
