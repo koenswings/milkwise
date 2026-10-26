@@ -514,39 +514,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         />
       )}
 
-      {/* 3. Next Feed card — shows when preferred bottle size is next available */}
-      <View style={[styles.card, { marginBottom: 12 }]}>
-        <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
-        {(() => {
-          const prog = canTakeProgression(feeds, calc.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
-          // Find the entry for the preferred bottle size specifically
-          const preferredEntry = prog.find(e => e.waterMl === calc.preferredBottleWaterMl);
-
-          if (!preferredEntry) {
-            return <Text style={styles.cardSub}>No feeds yet</Text>;
-          }
-
-          if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
-            return (
-              <>
-                <Text style={[styles.cardValue, { color: C.green }]}>Now · {calc.preferredBottleWaterMl} 🍼</Text>
-                <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
-              </>
-            );
-          } else {
-            return (
-              <>
-                <Text style={[styles.cardValue, { color: C.rose }]}>
-                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {calc.preferredBottleWaterMl} 🍼
-                </Text>
-                <Text style={[styles.cardSub, { color: C.rose }]}>{formatRelative(preferredEntry.readyAtMs, now)}</Text>
-              </>
-            );
-          }
-        })()}
-      </View>
-
-      {/* 4. Daily Target card */}
+      {/* 3. Daily Target card — directly below the timeline in every view (1.2.13) */}
       <View style={[styles.card, { marginBottom: 12 }]}>
         <Text style={styles.cardLabel}>🎯 DAILY TARGET</Text>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
@@ -605,6 +573,38 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         <Text style={styles.cardMuted}>
           Thresholds: ±{y}% yellow · ±{r}% red
         </Text>
+      </View>
+
+      {/* 4. Next Feed card — shows when preferred bottle size is next available */}
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
+        {(() => {
+          const prog = canTakeProgression(feeds, calc.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
+          // Find the entry for the preferred bottle size specifically
+          const preferredEntry = prog.find(e => e.waterMl === calc.preferredBottleWaterMl);
+
+          if (!preferredEntry) {
+            return <Text style={styles.cardSub}>No feeds yet</Text>;
+          }
+
+          if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.green }]}>Now · {calc.preferredBottleWaterMl} 🍼</Text>
+                <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
+              </>
+            );
+          } else {
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.rose }]}>
+                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {calc.preferredBottleWaterMl} 🍼
+                </Text>
+                <Text style={[styles.cardSub, { color: C.rose }]}>{formatRelative(preferredEntry.readyAtMs, now)}</Text>
+              </>
+            );
+          }
+        })()}
       </View>
 
       {/* 5. Last 3 feeds */}
