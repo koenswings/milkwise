@@ -24,8 +24,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
 import { buildClassicMarkers } from '../lib/classicMarkers';
-import { classicFeedsToday } from '../lib/classicToday';
-import { frozenCalcSettings, highlightSegmentsAt, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
+import { frozenCalcSettings, highlightSegmentsAt, zoneSegments, ZoneSegment, feedsInWindow, historyWindowStart, segmentsFromMs, visibleSegments } from '../lib/zoneSegments';
 import { startDashboardRefresh } from '../lib/dashboardRefresh';
 import { sizeColour } from '../lib/sizeColours';
 import type { HistoryEntry } from '../lib/settingsHistory';
@@ -209,7 +208,7 @@ interface TimelineProps {
   timeFormat: '24h' | '12h';
 }
 
-function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat, dayStartMs }: Omit<TimelineProps, 'predictors'> & { dayStartMs: number }) {
+function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat, windowStartMs }: Omit<TimelineProps, 'predictors'> & { windowStartMs: number }) {
 
   const progression = canTakeProgression(feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl);
 
@@ -221,7 +220,7 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
     fillDot: boolean;
     header?: string;
   }
-  const markers: Marker[] = buildClassicMarkers(progression, classicFeedsToday(feeds, dayStartMs), preferredBottleWaterMl, now)
+  const markers: Marker[] = buildClassicMarkers(progression, feedsInWindow(feeds, windowStartMs), preferredBottleWaterMl, now)
     .map((m): Marker => {
       switch (m.kind) {
         case 'last-feed':
@@ -282,8 +281,8 @@ const PX_PER_HOUR = 44;
 const ROW_H = 18;
 const LABEL_W = 40;
 
-function ZonesTimeline({ segments, now, dayStartMs, timeFormat }: {
-  segments: ZoneSegment[]; now: number; dayStartMs: number; timeFormat: '24h' | '12h';
+function ZonesTimeline({ segments, now, windowStartMs, timeFormat }: {
+  segments: ZoneSegment[]; now: number; windowStartMs: number; timeFormat: '24h' | '12h';
 }) {
   const card = [styles.card, { borderColor: 'rgba(45,212,191,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }];
   if (segments.length === 0) {
@@ -297,7 +296,7 @@ function ZonesTimeline({ segments, now, dayStartMs, timeFormat }: {
   const current = segments[segments.length - 1];
   const sizes = [...new Set(segments.flatMap(sg => sg.rows.map(r => r.waterMl)))].sort((a, b) => a - b);
   const lastClose = Math.max(now, ...current.rows.map(r => r.closeMs ?? r.openMs).filter(ms => ms - now < 12 * 3_600_000));
-  const startMs = dayStartMs;
+  const startMs = windowStartMs;
   const endMs = Math.max(now + 3_600_000, lastClose + 1_800_000);
   const x = (ms: number) => ((ms - startMs) / 3_600_000) * PX_PER_HOUR;
   const width = x(endMs);
@@ -393,6 +392,8 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(Date.now());
+  // noFeedRefMs for frozenCalcSettings (only used with no feeds): the load time — data-only, never the tick clock.
+  const [loadedAtMs, setLoadedAtMs] = useState(0);
 
   const load = useCallback(async () => {
     const [f, s, w, h] = await Promise.all([getFeeds(), getSettings(), getWeights(), getSettingsHistory()]);
@@ -400,6 +401,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     setHistory(h);
     setSettings(s);
     setWeights(w);
+    setLoadedAtMs(Date.now());
 
     // Don't update 'now' here — only the timer tick updates it so status stays frozen
   }, []);
@@ -410,26 +412,31 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     useCallback(() => startDashboardRefresh(load, () => setNow(Date.now())), [load])
   );
 
-  const dayStartMs = (() => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); })();
   // Every calculation parameter (ml/kg/day, preferred size, thresholds, weight, …) is frozen at
   // lastFeed.timestamp — the same frozenCalcSettings the current zone segment uses. Live
   // `settings` is only used for display-only keys and the edit controls.
   const fc = useMemo(
-    () => frozenCalcSettings(feeds, settings, history, weights, dayStartMs),
-    [feeds, settings, history, weights, dayStartMs],
+    () => frozenCalcSettings(feeds, settings, history, weights, loadedAtMs),
+    [feeds, settings, history, weights, loadedAtMs],
   );
   const calc = fc.settings;
   const effectiveWeightKg = fc.weightKg;
   const weightSource = fc.weightSource;
   const derived = deriveSettings(calc);
 
-  // Zones frozen at the last feed: recomputed only when data changes or the day rolls over,
-  // never on a clock tick. A tick re-runs only the highlight (§10).
+  // Zones frozen at the last feed: built from lastFeed − 24 h and recomputed only when data
+  // changes, never on a clock tick. A tick re-runs only the highlight and the window clip (§10).
+  const segFromMs = segmentsFromMs(feeds);                      // lastFeed − 24 h: data only
   const zonesFrozen = useMemo(
-    () => zoneSegments(feeds, settings, history, weights, dayStartMs),
-    [feeds, settings, history, weights, dayStartMs],
+    () => zoneSegments(feeds, settings, history, weights, segFromMs),
+    [feeds, settings, history, weights, segFromMs],
   );
-  const zonesShown = useMemo(() => highlightSegmentsAt(zonesFrozen, feeds, now), [zonesFrozen, feeds, now]);
+  const lastFeedMs = feeds.length > 0 ? Math.max(...feeds.map(f => f.timestamp)) : null;
+  const windowStartMs = historyWindowStart(now, lastFeedMs);   // rolling 24 h, extended to the last feed
+  const zonesShown = useMemo(
+    () => visibleSegments(highlightSegmentsAt(zonesFrozen, feeds, now), windowStartMs),
+    [zonesFrozen, feeds, now, windowStartMs],
+  );
 
   const lastFeed = feeds.length > 0
     ? feeds.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
@@ -500,7 +507,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         <ZonesTimeline
           segments={zonesShown}
           now={now}
-          dayStartMs={dayStartMs}
+          windowStartMs={windowStartMs}
           timeFormat={tf}
         />
       ) : (
@@ -511,7 +518,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           hourlyRate={derived.hourlyRate}
           dailyTargetMl={derived.dailyTargetMl}
           timeFormat={tf}
-          dayStartMs={dayStartMs}
+          windowStartMs={windowStartMs}
         />
       )}
 
