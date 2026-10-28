@@ -24,6 +24,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
 import { buildClassicMarkers } from '../lib/classicMarkers';
+import { classicFeedsToday } from '../lib/classicToday';
 import { frozenCalcSettings, highlightSegmentsAt, zoneSegments, ZoneSegment } from '../lib/zoneSegments';
 import { startDashboardRefresh } from '../lib/dashboardRefresh';
 import { sizeColour } from '../lib/sizeColours';
@@ -208,8 +209,7 @@ interface TimelineProps {
   timeFormat: '24h' | '12h';
 }
 
-function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat }: Omit<TimelineProps, 'predictors'>) {
-  const lastFeed = feeds.length > 0 ? feeds.reduce((a, b) => a.timestamp > b.timestamp ? a : b) : null;
+function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat, dayStartMs }: Omit<TimelineProps, 'predictors'> & { dayStartMs: number }) {
 
   const progression = canTakeProgression(feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl);
 
@@ -221,12 +221,12 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
     fillDot: boolean;
     header?: string;
   }
-  const markers: Marker[] = buildClassicMarkers(progression, lastFeed ? [lastFeed] : [], preferredBottleWaterMl, now)
+  const markers: Marker[] = buildClassicMarkers(progression, classicFeedsToday(feeds, dayStartMs), preferredBottleWaterMl, now)
     .map((m): Marker => {
       switch (m.kind) {
         case 'last-feed':
         case 'past-feed':
-          return { label: `${m.waterMl} 🍼`, time: fmtTimeStr(m.ms, timeFormat), dotColor: '#475569', fillDot: true, header: 'Last feed' };
+          return { label: `${m.waterMl} 🍼`, time: fmtTimeStr(m.ms, timeFormat), dotColor: '#475569', fillDot: true, header: m.kind === 'last-feed' ? 'Last feed' : undefined };
         case 'advised':
           return { label: `${m.waterMl} 🍼`, time: 'now', dotColor: '#4ade80', fillDot: true, header: 'Give now' };
         default:
@@ -511,6 +511,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           hourlyRate={derived.hourlyRate}
           dailyTargetMl={derived.dailyTargetMl}
           timeFormat={tf}
+          dayStartMs={dayStartMs}
         />
       )}
 

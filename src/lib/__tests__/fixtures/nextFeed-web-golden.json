@@ -1,0 +1,581 @@
+{
+ "note": "Generated from web baby-milk-tracker nextFeedTime @ c6b30d4 (weight 6.2 kg, smoothedTotal = smoothedEffective at last feed)",
+ "cases": [
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -540,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792737106451.613,
+    "balanceMl": -540,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -540,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792735225161.2903,
+    "balanceMl": -540,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792784057419.3547,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792784057419.3547,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792782176129.0322,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792785938709.6775,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792860677419.3547,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792860677419.3547,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792858796129.0322,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792862558709.6775,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -540,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792739545161.2905,
+    "balanceMl": -540,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -540,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792737176129.0325,
+    "balanceMl": -540,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792788121935.484,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792788121935.484,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792785752903.2258,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792790490967.742,
+    "balanceMl": 135,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792864741935.484,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792864741935.484,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792862372903.2258,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 150,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792867110967.742,
+    "balanceMl": 564,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -664,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792735999810.2468,
+    "balanceMl": -664,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -664,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 3,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792734339848.1975,
+    "balanceMl": -664,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792782213017.078,
+    "balanceMl": 11,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792780334459.2031,
+    "balanceMl": 11,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792780553055.0286,
+    "balanceMl": 11,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 8,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792780334459.2031,
+    "balanceMl": 11,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792858833017.078,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792858833017.078,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792857173055.0286,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 120,
+   "n": 16,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792860492979.1272,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -664,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792738151612.903,
+    "balanceMl": -664,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792727700000,
+    "balanceMl": -664,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 3,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792736061290.3225,
+    "balanceMl": -664,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792785799354.8386,
+    "balanceMl": 11,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792783203529.4116,
+    "balanceMl": 11,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792783709032.258,
+    "balanceMl": 11,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 8,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792783203529.4116,
+    "balanceMl": 11,
+    "capped": false
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792862419354.8386,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 25,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792862419354.8386,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 10,
+   "useTargetAwarePredictor": true,
+   "result": {
+    "timestamp": 1792860329032.258,
+    "balanceMl": 423,
+    "capped": true
+   }
+  },
+  {
+   "mlPerKgPerDay": 170,
+   "pref": 150,
+   "n": 16,
+   "maxCorrectionPct": 40,
+   "useTargetAwarePredictor": false,
+   "result": {
+    "timestamp": 1792864509677.4192,
+    "balanceMl": 423,
+    "capped": true
+   }
+  }
+ ]
+}
