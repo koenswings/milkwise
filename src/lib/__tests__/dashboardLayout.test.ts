@@ -1,4 +1,4 @@
-// 1.2.13 layout: Status → timeline (zones or classic; stored 'cards' renders classic) →
+// 1.2.13 layout (unchanged in 1.2.14): Status → timeline (zones or classic; stored 'cards' renders classic) →
 // Daily Target → Next Feed → Recent feeds. Daily Target is rendered once, outside the view switch.
 import fs from 'fs';
 import path from 'path';
