@@ -19,7 +19,8 @@ export interface Settings {
   yellowThresholdPct: number;      // default 5
   redThresholdPct: number;         // default 10
   timeFormat: '24h' | '12h';
-  feedingTimelineView?: 'timeline' | 'cards';
+  feedingTimelineView?: 'zones' | 'timeline' | 'cards'; // display only; absent = 'zones' ('cards' is web-only)
+  feedingTimelineViewMigrated?: true; // display-only marker set by the server migration; preserved on save
   dateOfBirthMs?: number;
   sex?: 'M' | 'F';
 }

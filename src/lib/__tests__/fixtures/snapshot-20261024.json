@@ -1,0 +1,87 @@
+{
+ "note": "Feeds (timestamp, water ml) from the 24/10 14:31 CEST snapshot, last 40 h; design/2026-10-25-feeding-zones.md §4.1. D=1390.2 formula ml/day, preferred 120.",
+ "D": 1390.2,
+ "preferred": 120,
+ "feeds": [
+  {
+   "id": "f0",
+   "timestamp": 1792705500000,
+   "volume": 107
+  },
+  {
+   "id": "f1",
+   "timestamp": 1792713660000,
+   "volume": 120
+  },
+  {
+   "id": "f2",
+   "timestamp": 1792727700000,
+   "volume": 120
+  },
+  {
+   "id": "f3",
+   "timestamp": 1792737600000,
+   "volume": 120
+  },
+  {
+   "id": "f4",
+   "timestamp": 1792748400000,
+   "volume": 120
+  },
+  {
+   "id": "f5",
+   "timestamp": 1792757100000,
+   "volume": 120
+  },
+  {
+   "id": "f6",
+   "timestamp": 1792764180000,
+   "volume": 120
+  },
+  {
+   "id": "f7",
+   "timestamp": 1792768380000,
+   "volume": 120
+  },
+  {
+   "id": "f8",
+   "timestamp": 1792777920000,
+   "volume": 120
+  },
+  {
+   "id": "f9",
+   "timestamp": 1792804260000,
+   "volume": 120
+  },
+  {
+   "id": "f10",
+   "timestamp": 1792793460000,
+   "volume": 120
+  },
+  {
+   "id": "f11",
+   "timestamp": 1792784760000,
+   "volume": 120
+  },
+  {
+   "id": "f12",
+   "timestamp": 1792816200000,
+   "volume": 120
+  },
+  {
+   "id": "f13",
+   "timestamp": 1792825920000,
+   "volume": 120
+  },
+  {
+   "id": "f14",
+   "timestamp": 1792836000000,
+   "volume": 120
+  },
+  {
+   "id": "f15",
+   "timestamp": 1792845000000,
+   "volume": 120
+  }
+ ]
+}

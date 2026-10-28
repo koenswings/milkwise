@@ -10,7 +10,7 @@
  *   6. Last 3 feeds list
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -22,8 +22,12 @@ import {
 import Constants from 'expo-constants';
 import { useFocusEffect } from '@react-navigation/native';
 
-import { getFeeds, getSettings, getWeights, saveSettings, saveErrorMessage } from '../lib/store';
-import { predictWeightKg } from '../lib/whoGrowth';
+import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
+import { buildClassicMarkers } from '../lib/classicMarkers';
+import { frozenCalcSettings, highlightSegmentsAt, zoneSegments, ZoneSegment, feedsInWindow, historyWindowStart, segmentsFromMs, visibleSegments } from '../lib/zoneSegments';
+import { startDashboardRefresh } from '../lib/dashboardRefresh';
+import { sizeColour } from '../lib/sizeColours';
+import type { HistoryEntry } from '../lib/settingsHistory';
 import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
   deriveSettings,
@@ -33,8 +37,6 @@ import {
   stomachCapMilk,
   stomachLoad,
   canTakeProgression,
-  stomachReadyAtMs,
-  ghostIntakeReadyAtMs,
   statusHexColor,
 } from '../lib/calculations';
 import { Feed, Settings, WeightEntry } from '../types';
@@ -206,31 +208,11 @@ interface TimelineProps {
   timeFormat: '24h' | '12h';
 }
 
-function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat }: Omit<TimelineProps, 'predictors'>) {
-  const lastFeed = feeds.length > 0 ? feeds.reduce((a, b) => a.timestamp > b.timestamp ? a : b) : null;
+function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat, windowStartMs }: Omit<TimelineProps, 'predictors'> & { windowStartMs: number }) {
 
   const progression = canTakeProgression(feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl);
 
-  // Ghost readyAt: computed from lastFeed.timestamp
-  const ghostReadyAt = new Map<number, number>();
-  if (lastFeed) {
-    for (const e of progression) {
-      const sMs = stomachReadyAtMs(feeds, e.waterMl, preferredBottleWaterMl, lastFeed.timestamp, hourlyRate);
-      const iMs = ghostIntakeReadyAtMs(feeds, e.waterMl, hourlyRate, dailyTargetMl, lastFeed.timestamp);
-      ghostReadyAt.set(e.waterMl, Math.max(sMs, iMs));
-    }
-    // Enforce ascending order: ghost markers must appear left-to-right smallest-to-largest.
-    // When overfed, smaller bottles can compute a later ghost time than larger ones.
-    const orderedSizes = [...ghostReadyAt.keys()].sort((a, b) => a - b);
-    let prevGhostMs = 0;
-    for (const w of orderedSizes) {
-      const ghostMs = Math.max(ghostReadyAt.get(w)!, prevGhostMs);
-      ghostReadyAt.set(w, ghostMs);
-      prevGhostMs = ghostMs;
-    }
-  }
-
-  // Build marker list
+  // Classic view: one marker per size at its single 100 % time (no second, earlier marker per size) — §10.
   interface Marker {
     label: string;
     time: string;
@@ -238,57 +220,18 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
     fillDot: boolean;
     header?: string;
   }
-
-  const markers: Marker[] = [];
-
-  // Last feed marker
-  if (lastFeed) {
-    markers.push({
-      label: `${lastFeed.volume} 🍼`,
-      time: fmtTimeStr(lastFeed.timestamp, timeFormat),
-      dotColor: '#475569',
-      fillDot: true,
-      header: 'Last feed',
+  const markers: Marker[] = buildClassicMarkers(progression, feedsInWindow(feeds, windowStartMs), preferredBottleWaterMl, now)
+    .map((m): Marker => {
+      switch (m.kind) {
+        case 'last-feed':
+        case 'past-feed':
+          return { label: `${m.waterMl} 🍼`, time: fmtTimeStr(m.ms, timeFormat), dotColor: '#475569', fillDot: true, header: m.kind === 'last-feed' ? 'Last feed' : undefined };
+        case 'advised':
+          return { label: `${m.waterMl} 🍼`, time: 'now', dotColor: '#4ade80', fillDot: true, header: 'Give now' };
+        default:
+          return { label: `${m.waterMl} 🍼`, time: fmtTimeStr(m.ms, timeFormat), dotColor: m.aboveBottle ? '#2dd4bf' : '#f43f5e', fillDot: false };
+      }
     });
-  }
-
-  // Ghost markers (fitsNow but not advised)
-  for (const e of progression) {
-    const ghostMs = ghostReadyAt.get(e.waterMl) ?? (lastFeed?.timestamp ?? e.readyAtMs);
-    if (e.fitsNow && !e.isAdvised) {
-      markers.push({
-        label: `${e.waterMl} 🍼`,
-        time: fmtTimeStr(ghostMs, timeFormat),
-        dotColor: '#475569',
-        fillDot: false,
-      });
-    } else if (e.isAdvised) {
-      // Ghost first
-      markers.push({
-        label: `${e.waterMl} 🍼`,
-        time: fmtTimeStr(ghostMs, timeFormat),
-        dotColor: '#475569',
-        fillDot: false,
-      });
-      // Then advised at now
-      markers.push({
-        label: `${e.waterMl} 🍼`,
-        time: 'now',
-        dotColor: '#4ade80',
-        fillDot: true,
-        header: 'Give now',
-      });
-    } else {
-      // Future
-      const isAbove = e.waterMl > preferredBottleWaterMl;
-      markers.push({
-        label: `${e.waterMl} 🍼`,
-        time: fmtTimeStr(e.readyAtMs, timeFormat),
-        dotColor: isAbove ? '#2dd4bf' : '#f43f5e',
-        fillDot: false,
-      });
-    }
-  }
 
   if (markers.length === 0) {
     return (
@@ -330,6 +273,110 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
   );
 }
 
+// ── ZonesTimeline (§10) ───────────────────────────────────────────────────────
+// Bars = [open, close) per size; a ring marks only a collapsed size. History from midnight,
+// every feed cuts the diagram. Highlighted size full colour, smaller in-zone sizes dimmed.
+
+const PX_PER_HOUR = 44;
+const ROW_H = 18;
+const LABEL_W = 40;
+
+function ZonesTimeline({ segments, now, windowStartMs, timeFormat }: {
+  segments: ZoneSegment[]; now: number; windowStartMs: number; timeFormat: '24h' | '12h';
+}) {
+  const card = [styles.card, { borderColor: 'rgba(45,212,191,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }];
+  if (segments.length === 0) {
+    return (
+      <View style={card}>
+        <Text style={styles.cardLabel}>FEEDING ZONES</Text>
+        <Text style={[styles.cardSub, { marginTop: 8 }]}>No feeds yet</Text>
+      </View>
+    );
+  }
+  const current = segments[segments.length - 1];
+  const sizes = [...new Set(segments.flatMap(sg => sg.rows.map(r => r.waterMl)))].sort((a, b) => a - b);
+  const lastClose = Math.max(now, ...current.rows.map(r => r.closeMs ?? r.openMs).filter(ms => ms - now < 12 * 3_600_000));
+  const startMs = windowStartMs;
+  const endMs = Math.max(now + 3_600_000, lastClose + 1_800_000);
+  const x = (ms: number) => ((ms - startMs) / 3_600_000) * PX_PER_HOUR;
+  const width = x(endMs);
+  const height = sizes.length * ROW_H + 18;
+  const highlighted = current.rows.find(r => r.isHighlighted) ?? null;
+  const hours: number[] = [];
+  for (let h = Math.ceil(startMs / 3_600_000) * 3_600_000; h <= endMs; h += 3_600_000) hours.push(h);
+
+  return (
+    <View style={card}>
+      <Text style={[styles.cardLabel, { marginBottom: 4 }]}>FEEDING ZONES</Text>
+      <Text style={[styles.cardSub, { marginBottom: 8 }]}>
+        {highlighted
+          ? highlighted.highlightKind === 'in-zone'
+            ? `${highlighted.waterMl} 🍼 now lands at ${Math.round(highlighted.landingNowPct)} %`
+            : `${highlighted.waterMl} 🍼 fits now · under target (${Math.round(highlighted.landingNowPct)} %)`
+          : 'No size in its zone right now'}
+        {current.approximate ? ' · settings approximate' : ''}
+      </Text>
+      <View style={{ flexDirection: 'row' }}>
+        <View style={{ width: LABEL_W }}>
+          {sizes.map(w => (
+            <Text key={w} style={{ height: ROW_H, fontSize: 10, color: sizeColour(w), fontFamily: 'monospace', fontWeight: w === current.preferredBottleWaterMl ? '700' : '400' }}>
+              {w}{w === current.preferredBottleWaterMl ? '★' : ''}
+            </Text>
+          ))}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentOffset={{ x: Math.max(0, x(now) - 160), y: 0 }}>
+          <View style={{ width, height }}>
+            {hours.map(h => (
+              <View key={`h${h}`} style={{ position: 'absolute', left: x(h), top: sizes.length * ROW_H, width: 1, height: 4, backgroundColor: '#334155' }}>
+                <Text style={{ position: 'absolute', top: 4, left: -12, width: 40, fontSize: 9, color: '#64748b' }}>{fmtTimeStr(h, timeFormat)}</Text>
+              </View>
+            ))}
+            {segments.map((sg, si) => {
+              const segEnd = sg.toMs ?? endMs;
+              return sg.rows.map(r => {
+                const row = sizes.indexOf(r.waterMl);
+                const colour = sizeColour(r.waterMl);
+                const isHl = sg.isCurrent && r.isHighlighted;
+                const dim = sg.isCurrent && highlighted !== null && !isHl && r.waterMl < highlighted.waterMl
+                  && r.closeMs !== null && r.openMs <= now && now < r.closeMs;
+                const opacity = !sg.isCurrent ? 0.45 : dim ? 0.35 : 1;
+                if (r.state === 'beyond-horizon') return null;
+                if (r.closeMs === null) {
+                  // collapsed: ring at S
+                  if (r.openMs < sg.fromMs || r.openMs > segEnd) return null;
+                  return (
+                    <View key={`${si}-${r.waterMl}`} style={{
+                      position: 'absolute', left: x(r.openMs) - 6, top: row * ROW_H + 3, width: 12, height: 12, borderRadius: 6,
+                      borderWidth: isHl ? 3 : 2, borderColor: colour, opacity,
+                    }} />
+                  );
+                }
+                const a = Math.max(r.openMs, sg.fromMs);
+                const b = Math.min(r.closeMs, segEnd);
+                if (b <= a) return null;
+                return (
+                  <View key={`${si}-${r.waterMl}`} style={{
+                    position: 'absolute', left: x(a), top: row * ROW_H + 4, width: Math.max(2, x(b) - x(a)), height: ROW_H - 8,
+                    borderRadius: 3, backgroundColor: colour, opacity,
+                    borderWidth: isHl ? 2 : 0, borderColor: '#e2e8f0',
+                  }} />
+                );
+              });
+            })}
+            {segments.filter(sg => sg.feed.timestamp >= startMs).map(sg => (
+              <View key={`f${sg.feed.id}`} style={{ position: 'absolute', left: x(sg.feed.timestamp), top: 0, width: 1, height: sizes.length * ROW_H, backgroundColor: '#94a3b8' }} />
+            ))}
+            <View style={{ position: 'absolute', left: x(now), top: 0, width: 2, height: sizes.length * ROW_H, backgroundColor: '#4ade80' }} />
+          </View>
+        </ScrollView>
+      </View>
+      <Text style={{ fontSize: 9, color: '#64748b', marginTop: 4 }}>
+        Bar = lands 105 %→100 % · ring = fits at that time, already ≤ 100 % · grey line = feed · green = now
+      </Text>
+    </View>
+  );
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 
 export default function DashboardScreen({ navigation }: { navigation: any }) {
@@ -343,64 +390,53 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     timeFormat: '24h',
   });
   const [weights, setWeights] = useState<WeightEntry[]>([]);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(Date.now());
-  const [effectiveWeightKg, setEffectiveWeightKg] = useState<number>(6.27);
-  const [weightSource, setWeightSource] = useState<'manual' | 'who' | 'settings'>('settings');
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // noFeedRefMs for frozenCalcSettings (only used with no feeds): the load time — data-only, never the tick clock.
+  const [loadedAtMs, setLoadedAtMs] = useState(0);
 
   const load = useCallback(async () => {
-    const [f, s, w] = await Promise.all([getFeeds(), getSettings(), getWeights()]);
+    const [f, s, w, h] = await Promise.all([getFeeds(), getSettings(), getWeights(), getSettingsHistory()]);
     setFeeds(f);
+    setHistory(h);
     setSettings(s);
     setWeights(w);
+    setLoadedAtMs(Date.now());
 
-    // WHO weight model — mirrors web app page.tsx
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayMs = startOfToday.getTime();
-
-    let newEffectiveWeightKg = s.weightKg;
-    let newWeightSource: 'manual' | 'who' | 'settings' = 'settings';
-
-    if (w.length > 0) {
-      const latestWeight = [...w].sort((a, b) => b.timestamp - a.timestamp)[0];
-      const daysSinceLast = (startOfTodayMs - latestWeight.timestamp) / 86_400_000;
-      if (daysSinceLast <= 7) {
-        newEffectiveWeightKg = latestWeight.weightKg;
-        newWeightSource = 'manual';
-      } else if (s.dateOfBirthMs && s.sex) {
-        const predicted = predictWeightKg(w, s.dateOfBirthMs, s.sex, startOfTodayMs);
-        if (predicted !== null) {
-          newEffectiveWeightKg = predicted;
-          newWeightSource = 'who';
-        } else {
-          newEffectiveWeightKg = latestWeight.weightKg;
-          newWeightSource = 'manual';
-        }
-      } else {
-        newEffectiveWeightKg = latestWeight.weightKg;
-        newWeightSource = 'manual';
-      }
-    }
-
-    setEffectiveWeightKg(newEffectiveWeightKg);
-    setWeightSource(newWeightSource);
     // Don't update 'now' here — only the timer tick updates it so status stays frozen
   }, []);
 
+  // Reload on focus and on return to foreground; the 30 s tick only moves 'now' (labels, now
+  // line, zone highlight) — never a feed fetch. Cleanup clears the timer and the AppState listener.
   useFocusEffect(
-    useCallback(() => {
-      load();
-      // Tick every 30s: updates 'now' for relative time labels + re-fetches feeds
-      intervalRef.current = setInterval(() => {
-        setNow(Date.now());
-        load(); // re-fetch to pick up any new feeds logged elsewhere
-      }, 30_000);
-      return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-    }, [load])
+    useCallback(() => startDashboardRefresh(load, () => setNow(Date.now())), [load])
   );
 
-  const derived = deriveSettings({ ...settings, weightKg: effectiveWeightKg });
+  // Every calculation parameter (ml/kg/day, preferred size, thresholds, weight, …) is frozen at
+  // lastFeed.timestamp — the same frozenCalcSettings the current zone segment uses. Live
+  // `settings` is only used for display-only keys and the edit controls.
+  const fc = useMemo(
+    () => frozenCalcSettings(feeds, settings, history, weights, loadedAtMs),
+    [feeds, settings, history, weights, loadedAtMs],
+  );
+  const calc = fc.settings;
+  const effectiveWeightKg = fc.weightKg;
+  const weightSource = fc.weightSource;
+  const derived = deriveSettings(calc);
+
+  // Zones frozen at the last feed: built from lastFeed − 24 h and recomputed only when data
+  // changes, never on a clock tick. A tick re-runs only the highlight and the window clip (§10).
+  const segFromMs = segmentsFromMs(feeds);                      // lastFeed − 24 h: data only
+  const zonesFrozen = useMemo(
+    () => zoneSegments(feeds, settings, history, weights, segFromMs),
+    [feeds, settings, history, weights, segFromMs],
+  );
+  const lastFeedMs = feeds.length > 0 ? Math.max(...feeds.map(f => f.timestamp)) : null;
+  const windowStartMs = historyWindowStart(now, lastFeedMs);   // rolling 24 h, extended to the last feed
+  const zonesShown = useMemo(
+    () => visibleSegments(highlightSegmentsAt(zonesFrozen, feeds, now), windowStartMs),
+    [zonesFrozen, feeds, now, windowStartMs],
+  );
 
   const lastFeed = feeds.length > 0
     ? feeds.reduce((a, b) => (a.timestamp > b.timestamp ? a : b))
@@ -410,20 +446,20 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const smoothedAt = lastFeed ? lastFeed.timestamp : now;
 
   const { totalMl: smoothedMl } = smoothedEffective(
-    feeds, derived.hourlyRate, settings.preferredBottleWaterMl, smoothedAt
+    feeds, derived.hourlyRate, calc.preferredBottleWaterMl, smoothedAt
   );
   const smoothedPct = (smoothedMl / derived.dailyTargetMl) * 100;
 
   // Stomach at live now (for StatusCard right column)
-  const capMilkVal = stomachCapMilk(settings.preferredBottleWaterMl, derived.hourlyRate);
+  const capMilkVal = stomachCapMilk(calc.preferredBottleWaterMl, derived.hourlyRate);
   const loadNow = stomachLoad(feeds, now);
 
   const recentFeeds = [...feeds]
     .sort((a, b) => b.timestamp - a.timestamp)
     .slice(0, 3);
 
-  const y = settings.yellowThresholdPct;
-  const r = settings.redThresholdPct;
+  const y = calc.yellowThresholdPct;
+  const r = calc.redThresholdPct;
   const tf = settings.timeFormat;
 
   return (
@@ -466,56 +502,34 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
         onExplain={() => {}}
       />
 
-      {/* 2. Feeding Timeline */}
-      <FeedingTimeline
-        feeds={feeds}
-        preferredBottleWaterMl={settings.preferredBottleWaterMl}
-        now={now}
-        hourlyRate={derived.hourlyRate}
-        dailyTargetMl={derived.dailyTargetMl}
-        timeFormat={tf}
-      />
+      {/* 2. Feeding Timeline — Zones by default; 'cards' is web-only, so it shows Classic here */}
+      {(settings.feedingTimelineView ?? 'zones') === 'zones' ? (
+        <ZonesTimeline
+          segments={zonesShown}
+          now={now}
+          windowStartMs={windowStartMs}
+          timeFormat={tf}
+        />
+      ) : (
+        <FeedingTimeline
+          feeds={feeds}
+          preferredBottleWaterMl={calc.preferredBottleWaterMl}
+          now={now}
+          hourlyRate={derived.hourlyRate}
+          dailyTargetMl={derived.dailyTargetMl}
+          timeFormat={tf}
+          windowStartMs={windowStartMs}
+        />
+      )}
 
-      {/* 3. Next Feed card — shows when preferred bottle size is next available */}
-      <View style={[styles.card, { marginBottom: 12 }]}>
-        <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
-        {(() => {
-          const prog = canTakeProgression(feeds, settings.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
-          // Find the entry for the preferred bottle size specifically
-          const preferredEntry = prog.find(e => e.waterMl === settings.preferredBottleWaterMl);
-
-          if (!preferredEntry) {
-            return <Text style={styles.cardSub}>No feeds yet</Text>;
-          }
-
-          if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
-            return (
-              <>
-                <Text style={[styles.cardValue, { color: C.green }]}>Now · {settings.preferredBottleWaterMl} 🍼</Text>
-                <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
-              </>
-            );
-          } else {
-            return (
-              <>
-                <Text style={[styles.cardValue, { color: C.rose }]}>
-                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {settings.preferredBottleWaterMl} 🍼
-                </Text>
-                <Text style={[styles.cardSub, { color: C.rose }]}>{formatRelative(preferredEntry.readyAtMs, now)}</Text>
-              </>
-            );
-          }
-        })()}
-      </View>
-
-      {/* 4. Daily Target card */}
+      {/* 3. Daily Target card — directly below the timeline in every view (1.2.13) */}
       <View style={[styles.card, { marginBottom: 12 }]}>
         <Text style={styles.cardLabel}>🎯 DAILY TARGET</Text>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
           <Text style={styles.cardValue}>{Math.round(derived.dailyTargetMl)} ml</Text>
           <Text style={styles.cardMuted}>·</Text>
           <Text style={[styles.cardValue, { fontSize: 15 }]}>
-            {settings.preferredBottleWaterMl} ml bottle
+            {calc.preferredBottleWaterMl} ml bottle
             {(() => {
               const h = Math.floor(derived.idealIntervalHours);
               const m = Math.round((derived.idealIntervalHours - h) * 60);
@@ -562,11 +576,43 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
           <Text style={styles.editIcon}>✏️</Text>
         </TouchableOpacity>
         <Text style={styles.cardMuted}>
-            {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO est.' : weightSource === 'manual' ? 'measured' : 'settings'}) × {settings.mlPerKgPerDay} ml/kg/day
+            {effectiveWeightKg.toFixed(2)} kg ({weightSource === 'who' ? 'WHO est.' : weightSource === 'manual' ? 'measured' : 'settings'}) × {calc.mlPerKgPerDay} ml/kg/day
           </Text>
         <Text style={styles.cardMuted}>
           Thresholds: ±{y}% yellow · ±{r}% red
         </Text>
+      </View>
+
+      {/* 4. Next Feed card — shows when preferred bottle size is next available */}
+      <View style={[styles.card, { marginBottom: 12 }]}>
+        <Text style={styles.cardLabel}>⏭ NEXT FEED</Text>
+        {(() => {
+          const prog = canTakeProgression(feeds, calc.preferredBottleWaterMl, now, derived.hourlyRate, derived.dailyTargetMl);
+          // Find the entry for the preferred bottle size specifically
+          const preferredEntry = prog.find(e => e.waterMl === calc.preferredBottleWaterMl);
+
+          if (!preferredEntry) {
+            return <Text style={styles.cardSub}>No feeds yet</Text>;
+          }
+
+          if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.green }]}>Now · {calc.preferredBottleWaterMl} 🍼</Text>
+                <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
+              </>
+            );
+          } else {
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.rose }]}>
+                  {fmtTimeStr(preferredEntry.readyAtMs, tf)} · {calc.preferredBottleWaterMl} 🍼
+                </Text>
+                <Text style={[styles.cardSub, { color: C.rose }]}>{formatRelative(preferredEntry.readyAtMs, now)}</Text>
+              </>
+            );
+          }
+        })()}
       </View>
 
       {/* 5. Last 3 feeds */}
