@@ -22,7 +22,7 @@ import {
 import Constants from 'expo-constants';
 import { useFocusEffect } from '@react-navigation/native';
 
-import { getFeeds, getSettings, getWeights, saveSettings } from '../lib/store';
+import { getFeeds, getSettings, getWeights, saveSettings, saveErrorMessage } from '../lib/store';
 import { predictWeightKg } from '../lib/whoGrowth';
 import { formatTime, formatDateTime } from '../lib/formatTime';
 import {
@@ -531,7 +531,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             (val) => {
               const kg = parseFloat(val);
               if (!isNaN(kg) && kg > 0) {
-                saveSettings({ ...settings, weightKg: kg }).then(load);
+                saveSettings({ ...settings, weightKg: kg }).then(load, (e) => Alert.alert('Save failed', saveErrorMessage(e)));
               }
             },
             'plain-text',
@@ -550,7 +550,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             (val) => {
               const ml = parseInt(val, 10);
               if (!isNaN(ml) && ml > 0) {
-                saveSettings({ ...settings, preferredBottleWaterMl: ml }).then(load);
+                saveSettings({ ...settings, preferredBottleWaterMl: ml }).then(load, (e) => Alert.alert('Save failed', saveErrorMessage(e)));
               }
             },
             'plain-text',

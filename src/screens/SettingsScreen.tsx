@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { getSettings, saveSettings, saveFeeds } from '../lib/store';
+import { getSettings, saveSettings, saveFeeds, saveErrorMessage } from '../lib/store';
 import { deriveSettings } from '../lib/calculations';
 import { Feed, Settings } from '../types';
 
@@ -67,6 +67,7 @@ export default function SettingsScreen() {
     redThresholdPct: 10,
     timeFormat: '24h',
   });
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [weightStr, setWeightStr] = useState('6.27');
   const [mlPerKgStr, setMlPerKgStr] = useState('150');
   const [bottleVolStr, setBottleVolStr] = useState('90');
@@ -105,7 +106,15 @@ export default function SettingsScreen() {
     }
 
     const newSettings: Settings = { weightKg, mlPerKgPerDay, preferredBottleWaterMl, yellowThresholdPct, redThresholdPct, timeFormat };
-    await saveSettings(newSettings);
+    try {
+      await saveSettings(newSettings);
+    } catch (e) {
+      const msg = saveErrorMessage(e);
+      setSaveError(msg);
+      Alert.alert('Save failed', msg);
+      return;
+    }
+    setSaveError(null);
     setSettings(newSettings);
     Alert.alert('Saved', 'Settings saved successfully.');
   };
@@ -225,6 +234,11 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.saveButton} onPress={handleSave}>
             <Text style={styles.saveButtonText}>💾 Save Settings</Text>
           </TouchableOpacity>
+          {saveError ? (
+            <Text testID="settings-save-error" accessibilityRole="alert" style={styles.saveError}>
+              ⚠️ {saveError}
+            </Text>
+          ) : null}
         </View>
 
         {/* Derived values */}
@@ -275,6 +289,14 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  saveError: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#FDECEA',
+    color: '#B3261E',
+    fontSize: 14,
+  },
   container: { flex: 1, backgroundColor: COLORS.bg },
   content: { padding: 16, paddingBottom: 40 },
   card: {

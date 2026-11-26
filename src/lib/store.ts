@@ -116,16 +116,54 @@ export async function getWeights(): Promise<WeightEntry[]> {
   return [];
 }
 
+/** Thrown when settings could not be saved to the server (HTTP error or network failure). */
+export class SettingsSaveError extends Error {
+  readonly kind: 'http' | 'network';
+  readonly status?: number;
+  constructor(kind: 'http' | 'network', message: string, status?: number) {
+    super(message);
+    this.name = 'SettingsSaveError';
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+/**
+ * Save settings. In API mode this throws SettingsSaveError when the request fails
+ * (non-2xx or network error) so callers can show the failure — a failed save is never
+ * silently dropped. No offline queue yet (phase 2).
+ */
 export async function saveSettings(settings: Settings): Promise<void> {
   if (USE_API) {
-    await fetch(`${API_URL}/api/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-MilkWise-Source': 'mobile' },
+        body: JSON.stringify(settings),
+      });
+    } catch (e) {
+      throw new SettingsSaveError(
+        'network',
+        `Settings not saved: could not reach the server (${e instanceof Error ? e.message : String(e)}). Check your connection and try again.`,
+      );
+    }
+    if (!res.ok) {
+      throw new SettingsSaveError(
+        'http',
+        `Settings not saved: the server returned an error (HTTP ${res.status}). Please try again.`,
+        res.status,
+      );
+    }
     return;
   }
   await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/** User-facing text for a failed save. */
+export function saveErrorMessage(e: unknown): string {
+  if (e instanceof SettingsSaveError) return e.message;
+  return `Settings not saved: ${e instanceof Error ? e.message : String(e)}`;
 }
 
 // Legacy migration stub — targetMlPerDay has been removed from Feed; this is now a no-op.
