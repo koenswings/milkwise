@@ -597,8 +597,10 @@ export type WeightSource = 'manual' | 'who' | 'settings';
  * Effective weight at refMs (pure; no clock). Only weigh-ins at or before refMs count:
  *   - none → fallbackKg ('settings');
  *   - latest weigh-in ≤ WEIGHT_FRESH_MS older than refMs → that measured weight ('manual');
- *   - older → WHO prediction at refMs from those weigh-ins when DOB and sex are known ('who'),
- *     else the latest measured weight ('manual').
+ *   - older → WHO projection at refMs along the LATEST weigh-in's z, floored at that weigh-in:
+ *     max(latest, projection) (design/2026-11-26-live-rules-and-weight-anchor.md §5–§7).
+ *     'who' when the projection is above the latest weigh-in; otherwise the latest measured
+ *     weight ('manual') — also when DOB/sex are unknown or the age is outside 0–24 months.
  */
 export function effectiveWeightKg(
   weights: Array<{ timestamp: number; weightKg: number }>,
@@ -613,7 +615,7 @@ export function effectiveWeightKg(
   if (refMs - latest.timestamp <= WEIGHT_FRESH_MS) return { weightKg: latest.weightKg, source: 'manual' };
   if (dateOfBirthMs !== undefined && sex !== undefined) {
     const predicted = predictWeightKg(known, dateOfBirthMs, sex, refMs);
-    if (predicted !== null && predicted > 0) return { weightKg: predicted, source: 'who' };
+    if (predicted !== null && predicted > latest.weightKg) return { weightKg: predicted, source: 'who' };
   }
   return { weightKg: latest.weightKg, source: 'manual' };
 }

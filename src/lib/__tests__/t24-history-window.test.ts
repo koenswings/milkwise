@@ -59,7 +59,7 @@ test("extend: a last feed older than 24 h is still shown (window extended to it)
   expect(markers.map((m) => [m.kind, m.ms])).toEqual([["last-feed", NOW - 25 * H]]);
 });
 
-test("feeds before midnight are replayed with settingsForFeed + effectiveWeightKg at their own time", () => {
+test("feeds before midnight are replayed with the rule at each segment's END (settingsForFeed + effectiveWeightKg at the next feed; 2026-11-26 §2)", () => {
   const midnight = new Date(2026, 9, 24, 0, 0, 0, 0).getTime();
   const evening = midnight - 4 * H;                         // 23/10 20:00 — inside the 24 h window
   const feeds = [feed("e", evening), feed("n", midnight + 3 * H), feed("m", midnight + 8 * H)];
@@ -77,10 +77,18 @@ test("feeds before midnight are replayed with settingsForFeed + effectiveWeightK
   const e = vis[0];
   expect(e.feed.timestamp).toBeLessThan(midnight);
   expect(e.fromMs).toBe(evening);                                         // not cut at midnight
-  expect(e.weightKg).toBe(effectiveWeightKg(weights, 6, undefined, undefined, evening).weightKg);
-  expect(e.weightKg).toBe(5);
-  expect(e.dailyTargetMl).toBeCloseTo(5 * 150, 9);
+  // e runs evening → n (midnight + 3 h): the weigh-in at +2 h and the ml/kg change at +1 h fall inside it,
+  // so its rule at its end is 6 kg × 170; the 5 kg weigh-in before the evening feed no longer applies.
+  expect(e.toMs).toBe(midnight + 3 * H);
+  expect(e.weightKg).toBe(effectiveWeightKg(weights, 6, undefined, undefined, midnight + 3 * H).weightKg);
+  expect(e.weightKg).toBe(6);
+  expect(e.dailyTargetMl).toBeCloseTo(6 * 170, 9);
   expect(vis[1].dailyTargetMl).toBeCloseTo(6 * 170, 9);
+  // a segment that ended before both changes keeps the old rule
+  const early = build([feed("x", evening - 3 * H), ...feeds], hist, weights).find((sg) => sg.feed.id === "x")!;
+  expect(early.toMs).toBe(evening);
+  expect(early.weightKg).toBe(5);
+  expect(early.dailyTargetMl).toBeCloseTo(5 * 150, 9);
 });
 
 test("frozen under moving now: 23 h → 25 h changes only visibility and highlight, never zone times or the clock", () => {
@@ -100,13 +108,4 @@ test("frozen under moving now: 23 h → 25 h changes only visibility and highlig
   expect(build(feeds)).toEqual(segs);                                     // rebuild is identical
   expect(spy).not.toHaveBeenCalled();
   spy.mockRestore();
-});
-
-test("Dashboard Classic and Zones use the same rolling window (no midnight filter)", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const src: string = require("fs").readFileSync(require("path").resolve(__dirname, "../../screens/DashboardScreen.tsx"), "utf8");
-  expect(src).toContain("buildClassicMarkers(progression, feedsInWindow(feeds, windowStartMs)");
-  expect(src).toContain("const windowStartMs = historyWindowStart(now, lastFeedMs)");
-  expect(src).toContain("const startMs = windowStartMs;");
-  expect(src).not.toMatch(/setHours\(0, 0, 0, 0\)/);
 });

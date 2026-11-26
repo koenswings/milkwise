@@ -93,7 +93,13 @@ export function predictWeightFromZ(z: number, ageMonths: number, sex: 'M' | 'F')
   return M * Math.pow(1 + L * S * z, 1 / L);
 }
 
-/** Estimate the baby's z-score channel from all weight measurements */
+const MONTH_MS = 365.25 / 12 * 86_400_000;
+
+/**
+ * Long-run mean z of all weigh-ins in 0–24 months. Trend marker only: the analytics chart draws
+ * it as the "average channel" line. It no longer drives the weight estimate — that is anchored
+ * on the latest weigh-in (latestZScore; design/2026-11-26-live-rules-and-weight-anchor.md §5).
+ */
 export function estimateZChannel(
   weights: Array<{ timestamp: number; weightKg: number }>,
   dateOfBirthMs: number,
@@ -101,7 +107,7 @@ export function estimateZChannel(
 ): number | null {
   if (weights.length === 0) return null;
   const zScores = weights.map(w => {
-    const ageMonths = (w.timestamp - dateOfBirthMs) / (365.25 / 12 * 86_400_000);
+    const ageMonths = (w.timestamp - dateOfBirthMs) / MONTH_MS;
     if (ageMonths < 0 || ageMonths > 24) return null;
     return computeZScore(w.weightKg, ageMonths, sex);
   }).filter((z): z is number => z !== null);
@@ -109,16 +115,36 @@ export function estimateZChannel(
   return zScores.reduce((a, b) => a + b, 0) / zScores.length;
 }
 
-/** Predict baby's weight at a given timestamp */
+/**
+ * z of the LATEST weigh-in (by timestamp) — the anchor of the weight estimate and the header z
+ * (design 2026-11-26 §5, §8). null with no weigh-ins, or when the latest weigh-in lies outside
+ * 0–24 months (no WHO data: callers use the latest measured weight, as before).
+ */
+export function latestZScore(
+  weights: Array<{ timestamp: number; weightKg: number }>,
+  dateOfBirthMs: number,
+  sex: 'M' | 'F'
+): number | null {
+  if (weights.length === 0) return null;
+  const latest = weights.reduce((a, b) => (b.timestamp > a.timestamp ? b : a));
+  const ageMonths = (latest.timestamp - dateOfBirthMs) / MONTH_MS;
+  if (ageMonths < 0 || ageMonths > 24) return null;
+  return computeZScore(latest.weightKg, ageMonths, sex);
+}
+
+/**
+ * Predict baby's weight at atMs: the latest weigh-in's z projected forward along that z
+ * (design 2026-11-26 §5). Pure — no clock. null outside 0–24 months.
+ */
 export function predictWeightKg(
   weights: Array<{ timestamp: number; weightKg: number }>,
   dateOfBirthMs: number,
   sex: 'M' | 'F',
   atMs: number
 ): number | null {
-  const z = estimateZChannel(weights, dateOfBirthMs, sex);
+  const z = latestZScore(weights, dateOfBirthMs, sex);
   if (z === null) return null;
-  const ageMonths = (atMs - dateOfBirthMs) / (365.25 / 12 * 86_400_000);
+  const ageMonths = (atMs - dateOfBirthMs) / MONTH_MS;
   if (ageMonths < 0 || ageMonths > 24) return null;
   return predictWeightFromZ(z, ageMonths, sex);
 }

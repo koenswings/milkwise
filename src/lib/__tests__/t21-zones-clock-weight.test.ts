@@ -1,10 +1,12 @@
 // (1) Zones frozen at last feed, highlight evaluated now: a clock tick only re-runs the highlight.
-// (2) Replay weight: past segments use effectiveWeightKg at the feed's own timestamp.
+// (2) Replay weight: a closed segment uses effectiveWeightKg at its END (the next feed); the open
+//     segment and the status card count weigh-ins up to max(lastFeed, latest weigh-in)
+//     (design/2026-11-26-live-rules-and-weight-anchor.md §2, §4).
 import fs from "fs";
 import path from "path";
 import fx from "./fixtures/snapshot-20261024.json";
 import { effectiveWeightKg, smoothedEffective, WEIGHT_FRESH_MS } from "../calculations";
-import { highlightSegmentsAt, frozenCalcSettings, zoneSegments } from "../zoneSegments";
+import { statusCalcSettings, highlightSegmentsAt, zoneSegments } from "../zoneSegments";
 import { Feed, Settings } from "../../types";
 
 const D = fx.D;
@@ -84,45 +86,56 @@ describe("effectiveWeightKg(refMs)", () => {
   });
 });
 
-describe("replay uses the weight at each past feed", () => {
+describe("replay uses the weight at each past segment's end", () => {
   const morningFeed = at("09:12");
+  const sorted = [...feeds].sort((a, b) => a.timestamp - b.timestamp);
+  const morningEnd = sorted[sorted.findIndex((f) => f.timestamp === morningFeed) + 1].timestamp;
   const weights = [{ timestamp: morningFeed - 2 * DAY, weightKg: 6.0 }];
   const seg = (ws: typeof weights) => zoneSegments(feeds, current, [], ws, dayStart).find((s) => s.feed.timestamp === morningFeed)!;
 
-  test("past segment D = effective weight at that feed", () => {
+  test("past segment D = effective weight at its end (next feed)", () => {
     const s = seg(weights);
+    expect(s.toMs).toBe(morningEnd);
     expect(s.weightKg).toBe(6.0);
     expect(s.dailyTargetMl).toBeCloseTo(900, 6);
   });
-  test("a weigh-in made after a past feed does not change that feed's target", () => {
+  test("a weigh-in inside a past segment counts for it; one after its end does not", () => {
     const before = seg(weights);
-    const after = seg([...weights, { timestamp: morningFeed + 60_000, weightKg: 7.4 }]);
-    expect(after.dailyTargetMl).toBe(before.dailyTargetMl);
-    expect(after.rows).toEqual(before.rows);
+    const inside = seg([...weights, { timestamp: morningFeed + 60_000, weightKg: 7.4 }]);
+    expect(inside.weightKg).toBe(7.4);
+    expect(inside.dailyTargetMl).toBeCloseTo(7.4 * 150, 9);
+    const afterEnd = seg([...weights, { timestamp: morningEnd + 60_000, weightKg: 7.4 }]);
+    expect(afterEnd.dailyTargetMl).toBe(before.dailyTargetMl);
+    expect(afterEnd.rows).toEqual(before.rows);
   });
   const last = Math.max(...feeds.map((f) => f.timestamp));
   const status = (fs: Feed[], ws: typeof weights) => {
-    const w = frozenCalcSettings(fs, current, [], ws, dayStart).weightKg;
+    const w = statusCalcSettings(fs, current, ws, dayStart).weightKg;
     const d = w * 150;
     return { d, pct: (smoothedEffective(fs, d / 24, 120, Math.max(...fs.map((f) => f.timestamp))).totalMl / d) * 100 };
   };
   const curSeg = (fs: Feed[], ws: typeof weights) => { const s = zoneSegments(fs, current, [], ws, dayStart); return s[s.length - 1]; };
 
-  test("current segment and status card use the same weight (effective weight at lastFeed)", () => {
+  test("current segment and status card use the same weight", () => {
     const ws = [{ timestamp: last - DAY, weightKg: 6.2 }];
     expect(curSeg(feeds, ws).weightKg).toBe(6.2);
     expect(curSeg(feeds, ws).dailyTargetMl).toBeCloseTo(status(feeds, ws).d, 9);
     expect(curSeg(feeds, []).dailyTargetMl).toBeCloseTo(D, 6); // no weigh-ins → settings weight, like the card
   });
-  test("a weigh-in after the last feed changes neither the current segment nor status; after a new feed it does", () => {
+  test("a weigh-in after the last feed applies immediately to the current segment and status; the closed segment keeps it after the next feed", () => {
     const ws = [{ timestamp: last - DAY, weightKg: 6.2 }];
     const later = [...ws, { timestamp: last + 30 * 60_000, weightKg: 7.0 }];
-    expect(curSeg(feeds, later)).toEqual(curSeg(feeds, ws));
-    expect(status(feeds, later)).toEqual(status(feeds, ws));
+    expect(curSeg(feeds, later).weightKg).toBe(7.0);
+    expect(curSeg(feeds, later).dailyTargetMl).toBeCloseTo(1050, 9);
+    expect(status(feeds, later).d).toBeCloseTo(1050, 9);
+    expect(status(feeds, later).pct).not.toBeCloseTo(status(feeds, ws).pct, 3);
+    expect(statusCalcSettings(feeds, current, later, dayStart).weightRefMs).toBe(last + 30 * 60_000);
+    expect(statusCalcSettings(feeds, current, later, dayStart).refMs).toBe(last); // status time unchanged
+    const open = curSeg(feeds, later);
     const next: Feed[] = [...feeds, { id: "next", timestamp: last + 3 * 3_600_000, volume: 120 }];
+    const closed = zoneSegments(next, current, [], later, dayStart).find((s) => s.feed.timestamp === last)!;
+    expect(closed.weightKg).toBe(7.0);
+    expect(closed.rows).toEqual(open.rows);                     // no redraw after the next feed
     expect(curSeg(next, later).weightKg).toBe(7.0);
-    expect(curSeg(next, later).dailyTargetMl).toBeCloseTo(1050, 9);
-    expect(status(next, later).d).toBeCloseTo(1050, 9);
-    expect(status(next, later).pct).not.toBeCloseTo(status(next, ws).pct, 3);
   });
 });

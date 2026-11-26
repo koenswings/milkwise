@@ -13,7 +13,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { getSettings, saveSettings, saveFeeds, saveErrorMessage } from '../lib/store';
 import { deriveSettings } from '../lib/calculations';
-import { settingsToSave } from '../lib/settingsForm';
+import { settingsToSave, validateSettingsForm } from '../lib/settingsForm';
 import { Feed, Settings } from '../types';
 
 const COLORS = {
@@ -97,16 +97,16 @@ export default function SettingsScreen() {
   );
 
   const handleSave = async () => {
-    const weightKg = parseFloat(weightStr);
-    const mlPerKgPerDay = parseFloat(mlPerKgStr);
-    const preferredBottleWaterMl = parseFloat(bottleVolStr);
-    const yellowThresholdPct = parseFloat(yellowThreshStr);
-    const redThresholdPct = parseFloat(redThreshStr);
-
-    if (isNaN(weightKg) || isNaN(mlPerKgPerDay) || isNaN(preferredBottleWaterMl) || isNaN(yellowThresholdPct) || isNaN(redThresholdPct)) {
-      Alert.alert('Invalid values', 'Please enter valid numbers for all fields.');
+    // Validate on Save only (never mid-keystroke); out-of-range values are refused (2026-11-26 §10).
+    const v = validateSettingsForm({
+      weightKg: weightStr, mlPerKgPerDay: mlPerKgStr, preferredBottleWaterMl: bottleVolStr,
+      yellowThresholdPct: yellowThreshStr, redThresholdPct: redThreshStr,
+    });
+    if (!v.ok) {
+      Alert.alert('Invalid values', v.errors.join('\n'));
       return;
     }
+    const { weightKg, mlPerKgPerDay, preferredBottleWaterMl, yellowThresholdPct, redThresholdPct } = v.values;
 
     // Keep every key the form does not edit (view marker, DOB, sex, …): the server stores the whole object.
     const newSettings: Settings = settingsToSave(settings, {

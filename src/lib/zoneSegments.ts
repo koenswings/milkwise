@@ -1,35 +1,39 @@
-// Zones timeline history — pure (no clock, no fs). design/2026-10-25-feeding-zones.md §10, §11.3.
+// Zones timeline history — pure (no clock, no fs). design/2026-10-25-feeding-zones.md §10, §11.3;
+// rule settings refined by design/2026-11-26-live-rules-and-weight-anchor.md (live rules, weight anchor).
 // History window = rolling 24 h before now (Koen, 2026-10-28), extended to include the last feed:
 // historyWindowStart(now, lastFeedMs). Segments are built once from segmentsFromMs(feeds) =
 // lastFeed.timestamp − 24 h (data only, never now); each clock tick only runs highlightSegmentsAt
 // and the pure visibleSegments clip. Every actual feed cuts the diagram and starts a fresh set of zones,
-// recomputed with that feed included, with the settings in effect at that feed
-// (settingsForFeed / settingsForReplay) and with the effective weight at that feed, never "now".
+// recomputed with that feed included. Each segment uses the rule in effect at its END (2026-11-26 §2):
+// a closed segment the settings + effective weight at the next feed (settingsForFeed), the open
+// segment the live settings + effective weight up to max(lastFeed, latest weigh-in) — never "now".
 //
-// Zones are frozen at the last feed; the highlight is evaluated now (§10). zoneSegments never
-// takes the display clock, so a clock tick must only call highlightSegmentsAt.
+// Zone TIMES are computed from each segment's feed (status time frozen at the last feed); the
+// highlight is evaluated now (§10). zoneSegments never takes the display clock, so a clock tick
+// must only call highlightSegmentsAt.
 import { Feed, Settings } from "../types";
 import { WeightSource, ZoneRow, effectiveWeightKg, highlightZoneRows, smoothedAtTime, waterToMilk, zonesProgression } from "./calculations";
 import { HistoryEntry, settingsForFeed } from "./settingsHistory";
 
 export interface ZoneSegment {
-  feed: Feed;             // the feed that starts this segment (refMs = feed.timestamp)
+  feed: Feed;             // the feed that starts this segment (zone times computed from feed.timestamp)
   fromMs: number;         // max(feed.timestamp, fromMs) — clipped again by visibleSegments
   toMs: number | null;    // next feed timestamp (cut), null for the current segment
   isCurrent: boolean;
   preferredBottleWaterMl: number;
-  weightKg: number;       // effective weight used for D
+  weightKg: number;       // effective weight used for D (at the segment's end; live for the open one)
   dailyTargetMl: number;  // formula ml
-  approximate: boolean;   // settings before the first history snapshot
+  approximate: boolean;   // rule taken from before the first history snapshot
   rows: ZoneRow[];        // highlight: past segments at their feed time; current segment at refMs until highlightSegmentsAt
 }
 
 /**
  * Segments from `fromMs` (pass segmentsFromMs(feeds) — never a value derived from now) up to the
- * last feed; the feed before `fromMs` covers fromMs → first feed. Every segment — the current one included —
- * uses frozenCalcSettings at its own feed timestamp (settings history + effective weight; later
- * settings changes and weigh-ins are ignored), so changes take effect from the next feed. The
- * status card uses the same function at lastFeed.timestamp, so the two never disagree.
+ * last feed; the feed before `fromMs` covers fromMs → first feed. Each segment uses the rule in
+ * effect at its END (design 2026-11-26 §2): a closed segment segmentEndCalcSettings at the next
+ * feed's timestamp, the open (current) segment statusCalcSettings — the live settings and the
+ * weight up to max(lastFeed, latest weigh-in), exactly what the status card uses. A stretch that
+ * ran under a rule change therefore keeps that rule after the next feed closes it (no redraw).
  */
 export function zoneSegments(
   feeds: Feed[],
@@ -49,8 +53,10 @@ export function zoneSegments(
     const feed = sorted[i];
     const isCurrent = i === sorted.length - 1;
     const upTo = sorted.slice(0, i + 1);
-    // Same function as the status card: every calc param + weight frozen at this feed.
-    const fc = frozenCalcSettings(upTo, current, entries, weights, feed.timestamp);
+    // Rule at the segment's end: next feed (closed) or live (open — same as the status card).
+    const fc = isCurrent
+      ? statusCalcSettings(upTo, current, weights, feed.timestamp)
+      : segmentEndCalcSettings(current, entries, weights, sorted[i + 1].timestamp);
     const s = fc.settings;
     const weightKg = fc.weightKg;
     const D = weightKg * s.mlPerKgPerDay;
@@ -112,33 +118,36 @@ export function highlightSegmentsAt(segments: ZoneSegment[], feeds: Feed[], atMs
   });
 }
 
-/** Every calculation parameter frozen at one reference time (the last feed). */
-export interface FrozenCalc {
-  refMs: number;           // lastFeed.timestamp, or noFeedRefMs when there are no feeds
-  settings: Settings;      // settingsAt(refMs) with weightKg = effective weight; display-only keys from live settings
-  weightKg: number;
-  weightSource: WeightSource;
-  approximate: boolean;    // refMs before the first history snapshot
+/**
+ * Big-cut guard (design 2026-11-26 §9): the smoothed intake at atMs as % of the daily target when
+ * it already meets or exceeds the target (≥ 100 %), else null. When non-null the can-take /
+ * next-feed text says "over target" instead of a ready time that may be days away.
+ */
+export function overTargetPct(feeds: Feed[], hourlyRate: number, dailyTargetMl: number, atMs: number): number | null {
+  if (feeds.length === 0 || !(dailyTargetMl > 0)) return null;
+  const pct = (smoothedAtTime(feeds, hourlyRate, atMs) / dailyTargetMl) * 100;
+  return pct >= 100 ? pct : null;
 }
 
-/**
- * Calculation settings for the frozen status card and the current zone segment:
- * settingsForFeed (settings history) at lastFeed.timestamp for ml/kg/day, preferred size,
- * thresholds and every other calc param, plus effectiveWeightKg at that time. Settings or
- * weigh-ins changed after the last feed take effect from the next feed. Display-only keys
- * (timeFormat, feedingTimelineView, its marker) always come from the live settings.
- */
-export function frozenCalcSettings(
-  feeds: Feed[],
+/** Calculation parameters for one rule time (status card, or one zone segment). */
+export interface FrozenCalc {
+  refMs: number;           // status / segment time: lastFeed.timestamp (or noFeedRefMs), or a closed segment's end
+  weightRefMs: number;     // weigh-ins up to this time count: max(refMs, latest weigh-in) for the status
+  settings: Settings;      // rule settings with weightKg = effective weight; display-only keys from live settings
+  weightKg: number;
+  weightSource: WeightSource;
+  approximate: boolean;    // rule taken from before the first history snapshot
+}
+
+function withWeight(
+  s: Settings,
   current: Settings,
-  entries: HistoryEntry[],
   weights: Array<{ timestamp: number; weightKg: number }>,
-  noFeedRefMs: number,
+  refMs: number,
+  weightRefMs: number,
+  approximate: boolean,
 ): FrozenCalc {
-  const refMs = feeds.length > 0 ? Math.max(...feeds.map(f => f.timestamp)) : noFeedRefMs;
-  const at = feeds.length > 0 ? settingsForFeed(entries, current, { timestamp: refMs }) : { settings: current, approximate: false };
-  const s = at.settings;
-  const w = effectiveWeightKg(weights, s.weightKg, s.dateOfBirthMs, s.sex, refMs);
+  const w = effectiveWeightKg(weights, s.weightKg, s.dateOfBirthMs, s.sex, weightRefMs);
   const settings: Settings = {
     ...s,
     weightKg: w.weightKg,
@@ -148,5 +157,43 @@ export function frozenCalcSettings(
   };
   if (settings.feedingTimelineView === undefined) delete settings.feedingTimelineView;
   if (settings.feedingTimelineViewMigrated === undefined) delete settings.feedingTimelineViewMigrated;
-  return { refMs, settings, weightKg: w.weightKg, weightSource: w.source, approximate: at.approximate };
+  return { refMs, weightRefMs, settings, weightKg: w.weightKg, weightSource: w.source, approximate };
+}
+
+/** Weight reference time for the status / open segment: max(refMs, latest weigh-in) — data only. */
+export function weightRefMsFor(refMs: number, weights: Array<{ timestamp: number; weightKg: number }>): number {
+  return weights.reduce((m, w) => (w.timestamp > m ? w.timestamp : m), refMs);
+}
+
+/**
+ * Calculation settings for the status card and the open zone segment (design 2026-11-26 §1–§4).
+ * Status TIME stays frozen at lastFeed.timestamp (refMs; noFeedRefMs only with no feeds), but the
+ * rule settings (ml/kg/day, preferred size, thresholds, date of birth, sex, …) are the LIVE
+ * settings, and the weight is effectiveWeightKg at max(lastFeed, latest weigh-in), so a rule
+ * change or a weigh-in after the last feed applies immediately. No clock is read: live settings
+ * and weigh-ins are data, reloaded on page load / focus / app foreground.
+ */
+export function statusCalcSettings(
+  feeds: Feed[],
+  current: Settings,
+  weights: Array<{ timestamp: number; weightKg: number }>,
+  noFeedRefMs: number,
+): FrozenCalc {
+  const refMs = feeds.length > 0 ? Math.max(...feeds.map(f => f.timestamp)) : noFeedRefMs;
+  return withWeight(current, current, weights, refMs, weightRefMsFor(refMs, weights), false);
+}
+
+/**
+ * Rule of a CLOSED zone segment: the settings in effect at its end (the next feed's timestamp,
+ * settingsForFeed) and the effective weight at that time — so the segment keeps the rule it ran
+ * under, before and after it closed (design 2026-11-26 §2, §4).
+ */
+export function segmentEndCalcSettings(
+  current: Settings,
+  entries: HistoryEntry[],
+  weights: Array<{ timestamp: number; weightKg: number }>,
+  endMs: number,
+): FrozenCalc {
+  const at = settingsForFeed(entries, current, { timestamp: endMs });
+  return withWeight(at.settings, current, weights, endMs, endMs, at.approximate);
 }
