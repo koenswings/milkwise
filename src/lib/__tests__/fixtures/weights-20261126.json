@@ -1,0 +1,75 @@
+{
+ "_note": "Live weigh-ins (17) as of 26 Nov 2026: 16 from the 2026-10-24 data snapshot + 10.00 kg on 12 Nov (time 12:00 assumed). DOB 2026-04-15, girl. design/2026-11-26-live-rules-and-weight-anchor.md",
+ "dateOfBirthMs": 1776204000000,
+ "sex": "F",
+ "weights": [
+  {
+   "timestamp": 1776718740000,
+   "weightKg": 4.13
+  },
+  {
+   "timestamp": 1776804780000,
+   "weightKg": 4.21
+  },
+  {
+   "timestamp": 1776977580000,
+   "weightKg": 4.41
+  },
+  {
+   "timestamp": 1777323120000,
+   "weightKg": 4.65
+  },
+  {
+   "timestamp": 1777582320000,
+   "weightKg": 4.8
+  },
+  {
+   "timestamp": 1777755120000,
+   "weightKg": 4.98
+  },
+  {
+   "timestamp": 1778619060000,
+   "weightKg": 5.45
+  },
+  {
+   "timestamp": 1779915060000,
+   "weightKg": 6.09
+  },
+  {
+   "timestamp": 1780346460000,
+   "weightKg": 6.27
+  },
+  {
+   "timestamp": 1780605900000,
+   "weightKg": 6.47
+  },
+  {
+   "timestamp": 1781500140000,
+   "weightKg": 6.9
+  },
+  {
+   "timestamp": 1783005120000,
+   "weightKg": 7.11
+  },
+  {
+   "timestamp": 1784740560000,
+   "weightKg": 7.5
+  },
+  {
+   "timestamp": 1786031220000,
+   "weightKg": 8.07
+  },
+  {
+   "timestamp": 1789129080000,
+   "weightKg": 8.67
+  },
+  {
+   "timestamp": 1790255340000,
+   "weightKg": 9.09
+  },
+  {
+   "timestamp": 1794481200000,
+   "weightKg": 10.0
+  }
+ ]
+}

@@ -24,7 +24,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import { getFeeds, getSettings, getWeights, getSettingsHistory, saveSettings, saveErrorMessage } from '../lib/store';
 import { buildClassicMarkers } from '../lib/classicMarkers';
-import { frozenCalcSettings, highlightSegmentsAt, zoneSegments, ZoneSegment, feedsInWindow, historyWindowStart, segmentsFromMs, visibleSegments } from '../lib/zoneSegments';
+import { statusCalcSettings, highlightSegmentsAt, overTargetPct, zoneSegments, ZoneSegment, feedsInWindow, historyWindowStart, segmentsFromMs, visibleSegments } from '../lib/zoneSegments';
 import { startDashboardRefresh } from '../lib/dashboardRefresh';
 import { sizeColour } from '../lib/sizeColours';
 import type { HistoryEntry } from '../lib/settingsHistory';
@@ -211,6 +211,8 @@ interface TimelineProps {
 function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl, timeFormat, windowStartMs }: Omit<TimelineProps, 'predictors'> & { windowStartMs: number }) {
 
   const progression = canTakeProgression(feeds, preferredBottleWaterMl, now, hourlyRate, dailyTargetMl);
+  // Big cut (2026-11-26 §9): intake already ≥ the live target → "over target", not a far-away time.
+  const overPct = progression.some(e => e.fitsNow) ? null : overTargetPct(feeds, hourlyRate, dailyTargetMl, now);
 
   // Classic view: one marker per size at its single 100 % time (no second, earlier marker per size) — §10.
   interface Marker {
@@ -229,7 +231,7 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
         case 'advised':
           return { label: `${m.waterMl} 🍼`, time: 'now', dotColor: '#4ade80', fillDot: true, header: 'Give now' };
         default:
-          return { label: `${m.waterMl} 🍼`, time: fmtTimeStr(m.ms, timeFormat), dotColor: m.aboveBottle ? '#2dd4bf' : '#f43f5e', fillDot: false };
+          return { label: `${m.waterMl} 🍼`, time: overPct !== null ? 'over target' : fmtTimeStr(m.ms, timeFormat), dotColor: m.aboveBottle ? '#2dd4bf' : '#f43f5e', fillDot: false };
       }
     });
 
@@ -269,6 +271,11 @@ function FeedingTimeline({ feeds, preferredBottleWaterMl, now, hourlyRate, daily
           </React.Fragment>
         ))}
       </ScrollView>
+      {overPct !== null && (
+        <Text style={[styles.cardSub, { color: C.orange, marginTop: 6 }]}>
+          Over target ({Math.round(overPct)} % of daily target) — no feed needed yet
+        </Text>
+      )}
     </View>
   );
 }
@@ -281,8 +288,8 @@ const PX_PER_HOUR = 44;
 const ROW_H = 18;
 const LABEL_W = 40;
 
-function ZonesTimeline({ segments, now, windowStartMs, timeFormat }: {
-  segments: ZoneSegment[]; now: number; windowStartMs: number; timeFormat: '24h' | '12h';
+function ZonesTimeline({ segments, feeds, now, windowStartMs, timeFormat }: {
+  segments: ZoneSegment[]; feeds: Feed[]; now: number; windowStartMs: number; timeFormat: '24h' | '12h';
 }) {
   const card = [styles.card, { borderColor: 'rgba(45,212,191,0.25)', borderWidth: 1, marginBottom: 12, padding: 12 }];
   if (segments.length === 0) {
@@ -302,6 +309,8 @@ function ZonesTimeline({ segments, now, windowStartMs, timeFormat }: {
   const width = x(endMs);
   const height = sizes.length * ROW_H + 18;
   const highlighted = current.rows.find(r => r.isHighlighted) ?? null;
+  // Big cut (2026-11-26 §9): intake already ≥ the live target → "over target", not a far-away time.
+  const overPct = overTargetPct(feeds, current.dailyTargetMl / 24, current.dailyTargetMl, now);
   const hours: number[] = [];
   for (let h = Math.ceil(startMs / 3_600_000) * 3_600_000; h <= endMs; h += 3_600_000) hours.push(h);
 
@@ -313,7 +322,9 @@ function ZonesTimeline({ segments, now, windowStartMs, timeFormat }: {
           ? highlighted.highlightKind === 'in-zone'
             ? `${highlighted.waterMl} 🍼 now lands at ${Math.round(highlighted.landingNowPct)} %`
             : `${highlighted.waterMl} 🍼 fits now · under target (${Math.round(highlighted.landingNowPct)} %)`
-          : 'No size in its zone right now'}
+          : overPct !== null
+            ? `Over target (${Math.round(overPct)} % of daily target) — no bottle advised yet`
+            : 'No size in its zone right now'}
         {current.approximate ? ' · settings approximate' : ''}
       </Text>
       <View style={{ flexDirection: 'row' }}>
@@ -392,7 +403,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
   const [weights, setWeights] = useState<WeightEntry[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [now, setNow] = useState(Date.now());
-  // noFeedRefMs for frozenCalcSettings (only used with no feeds): the load time — data-only, never the tick clock.
+  // noFeedRefMs for statusCalcSettings (only used with no feeds): the load time — data-only, never the tick clock.
   const [loadedAtMs, setLoadedAtMs] = useState(0);
 
   const load = useCallback(async () => {
@@ -412,12 +423,13 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
     useCallback(() => startDashboardRefresh(load, () => setNow(Date.now())), [load])
   );
 
-  // Every calculation parameter (ml/kg/day, preferred size, thresholds, weight, …) is frozen at
-  // lastFeed.timestamp — the same frozenCalcSettings the current zone segment uses. Live
-  // `settings` is only used for display-only keys and the edit controls.
+  // Status TIME is frozen at lastFeed.timestamp; the rule settings (ml/kg/day, preferred size,
+  // thresholds, DOB, sex) are live and the weight counts weigh-ins up to max(lastFeed, latest
+  // weigh-in) — design/2026-11-26-live-rules-and-weight-anchor.md. Same statusCalcSettings as the
+  // open zone segment. Settings and weigh-ins reload on focus / foreground, never on the tick.
   const fc = useMemo(
-    () => frozenCalcSettings(feeds, settings, history, weights, loadedAtMs),
-    [feeds, settings, history, weights, loadedAtMs],
+    () => statusCalcSettings(feeds, settings, weights, loadedAtMs),
+    [feeds, settings, weights, loadedAtMs],
   );
   const calc = fc.settings;
   const effectiveWeightKg = fc.weightKg;
@@ -506,6 +518,7 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
       {(settings.feedingTimelineView ?? 'zones') === 'zones' ? (
         <ZonesTimeline
           segments={zonesShown}
+          feeds={feeds}
           now={now}
           windowStartMs={windowStartMs}
           timeFormat={tf}
@@ -595,11 +608,21 @@ export default function DashboardScreen({ navigation }: { navigation: any }) {
             return <Text style={styles.cardSub}>No feeds yet</Text>;
           }
 
+          // Big cut (2026-11-26 §9): intake already ≥ the live target → "over target", not a far-away time.
+          const overPct = overTargetPct(feeds, derived.hourlyRate, derived.dailyTargetMl, now);
+
           if (preferredEntry.fitsNow || preferredEntry.isAdvised) {
             return (
               <>
                 <Text style={[styles.cardValue, { color: C.green }]}>Now · {calc.preferredBottleWaterMl} 🍼</Text>
                 <Text style={[styles.cardSub, { color: C.green }]}>available now</Text>
+              </>
+            );
+          } else if (overPct !== null) {
+            return (
+              <>
+                <Text style={[styles.cardValue, { color: C.orange }]}>Over target · {Math.round(overPct)} %</Text>
+                <Text style={[styles.cardSub, { color: C.orange }]}>no feed needed yet — intake is above the daily target</Text>
               </>
             );
           } else {

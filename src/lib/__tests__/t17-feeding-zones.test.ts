@@ -134,7 +134,7 @@ describe("determinism and replay", () => {
     expect(b).toEqual(a);
   });
 
-  test("past segments use the settings in effect at that feed (settingsForFeed), cut by the next feed", () => {
+  test("past segments use the settings in effect at their END (settingsForFeed at the next feed; 2026-11-26 §2), cut by the next feed", () => {
     const current: Settings = {
       weightKg: D / 150, mlPerKgPerDay: 150, preferredBottleWaterMl: 120,
       yellowThresholdPct: 5, redThresholdPct: 10, timeFormat: "24h",
@@ -148,14 +148,17 @@ describe("determinism and replay", () => {
     ];
     const dayStart = at("00:00");
     const segs = highlightSegmentsAt(zoneSegments(feeds, current, history, [], dayStart), feeds, at("16:20"));
-    const morning = segs.find((s) => s.feed.timestamp === at("09:12"))!;
+    const beforeMorning = segs.find((s) => s.toMs === at("09:12"))!;    // ends before the 11:00 change
+    const morning = segs.find((s) => s.feed.timestamp === at("09:12"))!; // 09:12 → 12:00: change at 11:00 inside
     const after = segs.find((s) => s.feed.timestamp === at("12:00"))!;
-    expect(morning.preferredBottleWaterMl).toBe(90);
-    expect(morning.rows.map((x) => x.waterMl)).toEqual([30, 60, 90, 120]);
+    expect(beforeMorning.preferredBottleWaterMl).toBe(90);
+    expect(beforeMorning.rows.map((x) => x.waterMl)).toEqual([30, 60, 90, 120]);
     expect(morning.toMs).toBe(after.feed.timestamp);
+    expect(morning.preferredBottleWaterMl).toBe(120);
+    expect(morning.rows.map((x) => x.waterMl)).toEqual([30, 60, 90, 120, 150]);
     expect(after.preferredBottleWaterMl).toBe(120);
     expect(after.rows.map((x) => x.waterMl)).toEqual([30, 60, 90, 120, 150]);
-    // the current segment is frozen at lastFeed.timestamp (refMs) and equals a direct computation
+    // the current segment: zone times from lastFeed.timestamp (refMs), live rule; equals a direct computation
     const cur = segs[segs.length - 1];
     expect(cur.isCurrent).toBe(true);
     expect(cur.feed.timestamp).toBe(last);
